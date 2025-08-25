@@ -1,0 +1,56 @@
+FROM python:3.11-slim
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置环境变量
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV POETRY_NO_INTERACTION=1
+ENV POETRY_VENV_IN_PROJECT=1
+
+# 安装系统依赖
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        make \
+        libpq-dev \
+        libmagic1 \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装Poetry
+RUN pip install poetry
+
+# 复制依赖文件
+COPY pyproject.toml poetry.lock* ./
+
+# 如果没有poetry.lock，先复制requirements.txt
+COPY requirements.txt ./
+
+# 安装Python依赖
+RUN if [ -f pyproject.toml ]; then \
+        poetry install --no-dev; \
+    else \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
+
+# 复制应用代码
+COPY . .
+
+# 创建数据目录
+RUN mkdir -p /app/data /app/logs /app/static
+
+# 设置权限
+RUN chmod +x /app/scripts/* || true
+
+# 暴露端口
+EXPOSE 8000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+
+# 启动命令
+CMD ["python", "main.py"]

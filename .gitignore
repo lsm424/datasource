@@ -1,0 +1,102 @@
+# 依赖包
+node_modules/
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 构建输出
+dist/
+build/
+*.egg-info/
+
+# 环境配置
+.env
+.env.local
+.env.production
+backend/.env
+
+# IDE/编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+logs/
+backend/logs/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+backend/*.db
+backend/data-browser.db
+
+# 缓存
+.cache/
+.parcel-cache/
+.nuxt/
+.next/
+
+# 测试覆盖率
+coverage/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Vue/前端相关
+.nuxt
+.output
+.vite
+dist-ssr
+*.local
+
+# Python相关
+*.egg
+*.egg-info
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.pytest_cache/
+htmlcov/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
