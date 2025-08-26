@@ -1,21 +1,28 @@
 <template>
   <div class="page-container">
     <div class="dashboard-header">
-      <h1>数据浏览系统仪表盘</h1>
-      <p>欢迎回来，{{ authStore.currentUser?.name }}</p>
+      <div class="header-content">
+        <h1>数据浏览系统仪表盘</h1>
+        <p>欢迎回来，{{ authStore.currentUser?.name }}</p>
+      </div>
       <div class="header-actions">
-        <el-button 
-          v-if="authStore.isAdmin"
-          type="primary" 
-          @click="runManualStats"
-          :loading="statsLoading"
-        >
-          执行统计任务
-        </el-button>
-        <el-button @click="refreshCharts" :loading="loading">
-          <el-icon><Refresh /></el-icon>
-          刷新数据
-        </el-button>
+        <div class="action-buttons">
+          <el-button 
+            v-if="authStore.isAdmin"
+            type="primary" 
+            @click="runManualStats"
+            :loading="statsLoading"
+          >
+            执行统计任务
+          </el-button>
+          <el-button @click="refreshCharts" :loading="loading">
+            <el-icon><Refresh /></el-icon>
+            刷新数据
+          </el-button>
+        </div>
+        <div v-if="stats.statsDate" class="stats-date-info">
+          统计日期: {{ formatStatsDate(stats.statsDate) }}
+        </div>
       </div>
     </div>
 
@@ -29,9 +36,6 @@
           <div class="stat-info">
             <h3>{{ stats.totalDataSources }}</h3>
             <p>数据源总数</p>
-            <small v-if="stats.statsDate" class="stats-date">
-              统计日期: {{ formatStatsDate(stats.statsDate) }}
-            </small>
           </div>
         </div>
       </el-card>
@@ -675,19 +679,40 @@ onMounted(() => {
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
+.header-content {
+  display: flex;
+  flex-direction: column;
+}
+
 .dashboard-header h1 {
   margin: 0;
   color: #303133;
+  font-size: 24px;
+  font-weight: 600;
 }
 
 .dashboard-header p {
-  margin: 5px 0 0 0;
+  margin: 8px 0 0 0;
   color: #606266;
+  font-size: 14px;
 }
 
 .header-actions {
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.action-buttons {
+  display: flex;
   gap: 10px;
+}
+
+.stats-date-info {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 5px;
 }
 
 .stats-grid {
@@ -739,11 +764,6 @@ onMounted(() => {
   margin: 5px 0 0 0;
   color: #909399;
   font-size: 14px;
-}
-
-.stats-date {
-  color: #409EFF;
-  font-size: 12px;
 }
 
 .admin-only-hint {
@@ -908,7 +928,16 @@ onMounted(() => {
     gap: 15px;
   }
   
+  .header-content {
+    width: 100%;
+  }
+  
   .header-actions {
+    width: 100%;
+    align-items: flex-start;
+  }
+  
+  .action-buttons {
     width: 100%;
     justify-content: flex-end;
   }
