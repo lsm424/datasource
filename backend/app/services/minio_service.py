@@ -157,8 +157,8 @@ class MinIOService:
                 if not relative_key:
                     continue
                 
-                # 检查是否在子文件夹中
-                if delimiter in relative_key:
+                # 检查是否在子文件夹中（只有当delimiter不为空时才处理文件夹结构）
+                if delimiter and delimiter in relative_key:
                     # 提取第一级文件夹名
                     folder_name = relative_key.split(delimiter)[0]
                     folder_key = prefix + folder_name + delimiter

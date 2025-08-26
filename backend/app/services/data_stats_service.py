@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ from app.core.database import get_db
 from app.models.datasource import DataSource, DataSourceType
 from app.models.data_stats import DataSourceStats, DailyStats, StatsTask
 from app.schemas.base import DataResponse
+from app.services.minio_service import create_minio_service
 
 logger = logging.getLogger(__name__)
 
@@ -225,14 +227,69 @@ class DataSizeCalculator:
     
     @staticmethod
     async def _calculate_s3_size(config: Dict[str, Any]) -> Tuple[int, int, int]:
-        """计算S3兼容存储大小"""
+        """计算S3兼容存储(MinIO)大小"""
         try:
-            # TODO: 实现S3 API调用来获取实际大小
-            # 这里需要使用boto3或类似库
-            logger.info("S3存储统计功能待实现")
-            return 0, 0, 0
+            logger.info("开始统计MinIO对象存储数据")
+            
+            # 解析配置 - 如果是字符串，先转为字典
+            if isinstance(config, str):
+                config = json.loads(config)
+            
+            # 创建MinIO服务实例
+            minio_service = create_minio_service(config)
+            
+            total_size = 0
+            total_files = 0
+            
+            # 检查配置中是否指定了特定的桶
+            specific_bucket = config.get('bucket')
+            
+            if specific_bucket:
+                # 只统计指定的桶
+                buckets_to_check = [{'name': specific_bucket}]
+                logger.info(f"统计指定存储桶: {specific_bucket}")
+            else:
+                # 获取所有存储桶
+                buckets_to_check = minio_service.list_buckets()
+                logger.info(f"找到 {len(buckets_to_check)} 个存储桶")
+            
+            for bucket in buckets_to_check:
+                bucket_name = bucket['name']
+                logger.info(f"统计存储桶: {bucket_name}")
+                
+                try:
+                    # 使用MinIO客户端直接遍历，避免delimiter问题
+                    bucket_size = 0
+                    bucket_files = 0
+                    
+                    # 直接使用MinIO客户端的list_objects方法
+                    all_objects = minio_service.client.list_objects(
+                        bucket_name=bucket_name,
+                        recursive=True  # 递归获取所有对象
+                    )
+                    
+                    for obj in all_objects:
+                        if obj.size is not None:  # 这是文件，不是文件夹
+                            file_size = obj.size
+                            total_size += file_size
+                            total_files += 1
+                            bucket_size += file_size
+                            bucket_files += 1
+                    
+                    logger.info(f"存储桶 {bucket_name} 统计完成: {bucket_files} 个文件, {bucket_size} 字节")
+                    
+                except Exception as bucket_error:
+                    logger.warning(f"统计存储桶 {bucket_name} 失败: {bucket_error}")
+                    continue
+            
+            logger.info(f"MinIO统计完成: 总文件数={total_files}, 总大小={total_size}字节")
+            
+            # 返回: (数据大小bytes, 文件数量, 数据条数)
+            # 对于对象存储，数据条数等于文件数量
+            return total_size, total_files, total_files
+            
         except Exception as e:
-            logger.error(f"S3统计失败: {e}")
+            logger.error(f"MinIO统计失败: {e}")
             return 0, 0, 0
     
     @staticmethod
