@@ -69,10 +69,13 @@ class ObjectStorageConfig(BaseModel):
     def validate_endpoint(cls, v):
         if not v or not v.strip():
             raise ValueError('端点地址不能为空')
-        # 简单的URL格式验证
-        if not (v.startswith('http://') or v.startswith('https://')):
-            raise ValueError('端点地址必须以http://或https://开头')
-        return v.strip()
+        # MinIO endpoint可以是 "localhost:9000" 或 "http://localhost:9000" 格式
+        v = v.strip()
+        # 如果包含协议，验证是否正确
+        if '://' in v:
+            if not (v.startswith('http://') or v.startswith('https://')):
+                raise ValueError('端点地址协议必须是http://或https://')
+        return v
     
     @validator('access_key')
     def validate_access_key(cls, v):
@@ -127,6 +130,34 @@ class DataSourceUpdate(BaseModel):
     desc: Optional[str] = Field(None, max_length=1000, description="描述")
     config: Optional[Union[FilesystemConfig, DatabaseConfig, ObjectStorageConfig]] = Field(None, description="连接配置")
     is_active: Optional[bool] = Field(None, description="是否激活")
+    type: Optional[DataSourceType] = Field(None, description="数据源类型（用于config验证）")
+    
+    @validator('config', pre=True)
+    def validate_config(cls, v, values):
+        if v is None:
+            return v
+        
+        # 如果有type字段，使用它来验证config
+        data_type = values.get('type')
+        if data_type:
+            if data_type == DataSourceType.FILESYSTEM:
+                return FilesystemConfig(**v) if isinstance(v, dict) else v
+            elif data_type == DataSourceType.DATABASE:
+                return DatabaseConfig(**v) if isinstance(v, dict) else v
+            elif data_type == DataSourceType.OBJECT_STORAGE:
+                return ObjectStorageConfig(**v) if isinstance(v, dict) else v
+        
+        # 如果没有type字段，尝试根据config内容推断类型
+        if isinstance(v, dict):
+            if 'endpoint' in v and 'access_key' in v:
+                return ObjectStorageConfig(**v)
+            elif 'host' in v and 'database' in v:
+                return DatabaseConfig(**v)
+            elif 'path' in v:
+                return FilesystemConfig(**v)
+        
+        return v
+    
     tags: Optional[List[str]] = Field(None, description="标签")
 
 
@@ -144,6 +175,33 @@ class DataSourceInDB(DataSourceBase):
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
     extra_metadata: Optional[Dict[str, Any]] = Field(None, description="额外元数据")
+    
+    @validator('config', pre=True)
+    def validate_config(cls, v):
+        """解析JSON字符串配置为字典"""
+        if isinstance(v, str):
+            try:
+                import json
+                return json.loads(v)
+            except json.JSONDecodeError:
+                raise ValueError("配置JSON格式无效")
+        elif isinstance(v, dict):
+            return v
+        else:
+            raise ValueError(f"配置类型无效: {type(v)}")
+    
+    @validator('extra_metadata', pre=True)
+    def validate_extra_metadata(cls, v):
+        """解析JSON字符串元数据为字典"""
+        if v is None:
+            return v
+        if isinstance(v, str):
+            try:
+                import json
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return v  # 如果解析失败，保持原值
+        return v
     
     class Config:
         from_attributes = True

@@ -142,15 +142,22 @@ export interface DatabaseRecord {
   [key: string]: any
 }
 
+// 存储桶接口
+export interface Bucket {
+  name: string
+  creation_date?: string
+  region: string
+}
+
 // 对象存储对象接口
 export interface ObjectStorageObject {
   key: string
   size: number
-  lastModified: string
+  last_modified?: string
   etag: string
-  storageClass?: string
-  contentType?: string
-  isFolder?: boolean
+  content_type?: string
+  is_dir?: boolean
+  metadata?: Record<string, any>
 }
 
 // 分页响应接口

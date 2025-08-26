@@ -78,7 +78,7 @@ export const useDataSourceStore = defineStore('datasource', () => {
       
       currentDataSource.value = response.data || response
       console.log('✅ DataSource Store: 数据源详情获取成功:', currentDataSource.value)
-      return { data: currentDataSource.value }
+      return currentDataSource.value
     } catch (error) {
       console.error('❌ DataSource Store: 获取数据源详情失败:', error)
       
@@ -89,7 +89,7 @@ export const useDataSourceStore = defineStore('datasource', () => {
         if (found) {
           console.log('✅ DataSource Store: 从缓存中找到数据源:', found)
           currentDataSource.value = found
-          return { data: found }
+          return found
         }
       }
       
@@ -108,16 +108,15 @@ export const useDataSourceStore = defineStore('datasource', () => {
       console.log('✅ DataSource Store: 创建数据源响应', response)
       
       // 检查响应数据结构
-      if (response && response.data) {
-        console.log('📊 DataSource Store: 新数据源数据', response.data)
-        dataSources.value.push(response.data)
-        console.log('📋 DataSource Store: 当前数据源列表', dataSources.value.length, '个数据源')
-      } else if (response) {
-        console.log('📊 DataSource Store: 直接使用响应数据', response)
-        dataSources.value.push(response)
+      const newDataSource = response.data || response
+      if (newDataSource && newDataSource.id) {
+        console.log('📊 DataSource Store: 新数据源数据', newDataSource)
+        dataSources.value.push(newDataSource)
         console.log('📋 DataSource Store: 当前数据源列表', dataSources.value.length, '个数据源')
       } else {
         console.error('❌ DataSource Store: 无效的响应数据', response)
+        console.warn('⚠️ DataSource Store: 创建响应数据无效，刷新列表')
+        await fetchDataSources()
       }
       return response
     } catch (error) {
@@ -133,12 +132,19 @@ export const useDataSourceStore = defineStore('datasource', () => {
     isUpdating.value = true
     try {
       const response = await dataSourceApi.updateDataSource(id, form)
-      const index = dataSources.value.findIndex(ds => ds.id === id)
-      if (index !== -1) {
-        dataSources.value[index] = response.data
-      }
-      if (currentDataSource.value?.id === id) {
-        currentDataSource.value = response.data
+      const updatedData = response.data || response
+      
+      if (updatedData) {
+        const index = dataSources.value.findIndex(ds => ds.id === id)
+        if (index !== -1) {
+          dataSources.value[index] = updatedData
+        }
+        if (currentDataSource.value?.id === id) {
+          currentDataSource.value = updatedData
+        }
+      } else {
+        console.warn('⚠️ DataSource Store: 更新响应数据为空，刷新列表')
+        await fetchDataSources()
       }
       return response
     } finally {
@@ -195,6 +201,7 @@ export const useDataSourceStore = defineStore('datasource', () => {
     // 方法
     fetchDataSources,
     fetchDataSourceById,
+    getDataSource: fetchDataSourceById, // 添加别名方法
     createDataSource,
     updateDataSource,
     deleteDataSource,

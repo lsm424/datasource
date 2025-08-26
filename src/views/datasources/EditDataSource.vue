@@ -8,6 +8,7 @@
         <el-breadcrumb-item>编辑数据源</el-breadcrumb-item>
       </el-breadcrumb>
       
+
       <div class="header-actions">
         <el-button @click="goBack">返回</el-button>
         <el-button 
@@ -247,7 +248,7 @@
                     placeholder="请输入数据库名称"
                   >
                     <template #prepend>
-                      <el-icon><DataBase /></el-icon>
+                      <el-icon><Coin /></el-icon>
                     </template>
                   </el-input>
                 </el-form-item>
@@ -365,42 +366,65 @@
             </el-col>
           </el-row>
 
-          <!-- JSON配置编辑器 -->
+          <!-- JSON高级配置 -->
+          <el-divider content-position="left">
+            <span>高级配置</span>
+            <el-tooltip content="高级用户可直接编辑JSON配置" placement="top">
+              <el-icon style="margin-left: 4px;"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </el-divider>
+          
           <el-form-item>
             <template #label>
-              <span>JSON配置</span>
-              <el-tooltip content="高级用户可直接编辑JSON配置" placement="top">
-                <el-icon style="margin-left: 4px;"><QuestionFilled /></el-icon>
-              </el-tooltip>
+              <span style="display: flex; align-items: center; gap: 8px;">
+                <el-icon><View /></el-icon>
+                JSON配置
+              </span>
             </template>
-            <div class="json-editor">
+            <div class="json-editor-section">
               <el-button 
-                type="text" 
+                type="primary" 
+                text
                 @click="showJsonEditor = !showJsonEditor"
-                style="margin-bottom: 8px;"
+                style="margin-bottom: 12px;"
               >
-                {{ showJsonEditor ? '隐藏' : '显示' }}JSON编辑器
+                {{ showJsonEditor ? '收起' : '展开' }}编辑器
               </el-button>
-              <div v-if="showJsonEditor">
-                <el-input
-                  v-model="jsonConfig"
-                  type="textarea"
-                  :rows="10"
-                  placeholder="JSON配置"
-                  @blur="validateJson"
-                />
-                <div v-if="jsonError" class="json-error">
-                  <el-alert
-                    :title="jsonError"
-                    type="error"
-                    :closable="false"
-                    show-icon
-                  />
+              
+              <el-collapse-transition>
+                <div v-show="showJsonEditor">
+                  <div class="json-editor-container">
+                    <el-input
+                      v-model="jsonConfig"
+                      type="textarea"
+                      :rows="15"
+                      placeholder="JSON配置 - 您可以在此直接编辑配置对象"
+                      @blur="validateJson"
+                      class="json-textarea"
+                    />
+                    <div v-if="jsonError" class="json-error">
+                      <el-alert
+                        :title="jsonError"
+                        type="error"
+                        :closable="false"
+                        show-icon
+                      />
+                    </div>
+                    <div v-else-if="showJsonEditor" class="json-hint">
+                      <el-alert
+                        title="💡 修改JSON后失焦会自动验证格式，通过验证后会同步到表单配置"
+                        type="info"
+                        :closable="false"
+                        show-icon
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </el-collapse-transition>
             </div>
           </el-form-item>
         </el-form>
+
       </el-card>
     </div>
 
@@ -435,12 +459,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, FormInstance } from 'element-plus'
+import { ElMessage, FormInstance } from 'element-plus'
 import { 
-  FolderOpened, Link, Box, Key, Lock, DataBase, Monitor, User,
-  QuestionFilled, Folder, Cloud, Coin
+  FolderOpened, Link, Box, Key, Lock, Coin, Monitor, User,
+  QuestionFilled, Folder, View
 } from '@element-plus/icons-vue'
 import { useDataSourceStore } from '@/stores/datasource'
 
@@ -473,7 +497,7 @@ const form = reactive({
   description: '',
   tags: [],
   is_active: true,
-  config: {}
+  config: {} as any // 临时使用any类型解决类型问题
 })
 
 // 测试结果
@@ -497,7 +521,7 @@ const typeOptions = [
   {
     value: 'object_storage',
     label: '对象存储',
-    icon: Cloud,
+    icon: Box,
     iconClass: 'storage-icon'
   },
   {
@@ -589,6 +613,8 @@ const isEditing = computed(() => {
   return !!route.params.id && route.params.id !== 'new'
 })
 
+
+
 // 生命周期
 onMounted(async () => {
   if (isEditing.value) {
@@ -619,15 +645,17 @@ async function loadDataSource() {
       cname: dataSource.value.cname,
       type: dataSource.value.type,
       company: dataSource.value.company,
-      description: dataSource.value.description,
+      description: dataSource.value.description || dataSource.value.desc, // 兼容不同字段名
       tags: dataSource.value.tags || [],
       is_active: dataSource.value.is_active,
       config: dataSource.value.config || {}
     })
     
     jsonConfig.value = JSON.stringify(form.config, null, 2)
-  } catch (error) {
-    ElMessage.error('加载数据源失败')
+    
+  } catch (error: any) {
+    console.error('❌ EditDataSource: 加载数据源失败:', error)
+    ElMessage.error(`加载数据源失败：${error.message || '未知错误'}`)
   } finally {
     loading.value = false
   }
@@ -731,7 +759,7 @@ async function saveDataSource() {
       cname: form.cname,
       type: form.type,
       company: form.company,
-      description: form.description,
+      desc: form.description, // 字段名映射：前端 description -> 后端 desc
       tags: form.tags,
       is_active: form.is_active,
       config: form.config
@@ -747,6 +775,9 @@ async function saveDataSource() {
     }
     
     ElMessage.success(isEditing.value ? '更新成功' : '创建成功')
+    
+    // 刷新数据源列表
+    await dataSourceStore.fetchDataSources()
     
     // 跳转到数据源列表或详情页
     router.push('/datasources')
@@ -851,15 +882,47 @@ function formatDetailKey(key: string): string {
   color: #909399;
 }
 
-.json-editor {
+/* JSON编辑器区域样式 */
+.json-editor-section {
+  width: 100%;
+}
+
+.json-editor-container {
   border: 1px solid #dcdfe6;
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 12px;
-  background: #fafafa;
+  background: #fafbfc;
+  position: relative;
+  margin-top: 8px;
+}
+
+.json-textarea :deep(.el-textarea__inner) {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  background: #fff;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  padding: 12px;
+  resize: vertical;
+  min-height: 300px;
+}
+
+.json-textarea :deep(.el-textarea__inner:focus) {
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.1);
 }
 
 .json-error {
-  margin-top: 8px;
+  margin-top: 12px;
+}
+
+.json-hint {
+  margin-top: 12px;
+}
+
+.json-hint :deep(.el-alert__content) {
+  font-size: 13px;
 }
 
 .test-result {

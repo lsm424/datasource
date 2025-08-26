@@ -441,7 +441,7 @@ const navigateToDataSource = (datasource: DataSource) => {
   const routeTypeMap: Record<string, string> = {
     'filesystem': 'filesystem',
     'database': 'database', 
-    'object_storage': 'objectstorage'
+    'object_storage': 'object_storage'
   }
   const routeType = routeTypeMap[datasource.type] || datasource.type
   router.push(`/browse/${routeType}/${datasource.id}`)

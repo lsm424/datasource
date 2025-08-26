@@ -104,13 +104,13 @@
           <template #default="{ row }">
             <div class="datasource-name">
               <el-icon class="datasource-icon">
-                <Folder v-if="row.type === 'filesystem'" />
-                <Coin v-else-if="row.type === 'database'" />
+                <Folder v-if="row?.type === 'filesystem'" />
+                <Coin v-else-if="row?.type === 'database'" />
                 <Box v-else />
               </el-icon>
               <div>
-                <div class="name-primary">{{ row.cname || row.name }}</div>
-                <div class="name-secondary" v-if="row.cname">{{ row.name }}</div>
+                <div class="name-primary">{{ row?.cname || row?.name || '未知数据源' }}</div>
+                <div class="name-secondary" v-if="row?.cname">{{ row?.name }}</div>
               </div>
             </div>
           </template>
@@ -166,7 +166,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <div class="action-buttons">
               <el-button 
@@ -178,44 +178,39 @@
                 浏览
               </el-button>
               
-              <el-button 
-                text 
-                type="primary" 
-                @click="testConnection(row)"
-                :loading="testingConnections[row.id]"
+              <!-- 管理员操作下拉菜单 -->
+              <el-dropdown 
                 v-if="authStore.isAdmin"
+                @command="(command: string) => handleAdminAction(command, row)"
+                placement="bottom-end"
               >
-                <el-icon><Link /></el-icon>
-                测试
-              </el-button>
-              
-              <el-button 
-                text 
-                @click="editDataSource(row)"
-                v-if="authStore.isAdmin"
-              >
-                <el-icon><Edit /></el-icon>
-                编辑
-              </el-button>
-              
-              <el-popconfirm
-                title="确定要删除这个数据源吗？"
-                confirm-button-text="确定"
-                cancel-button-text="取消"
-                @confirm="deleteDataSource(row)"
-                v-if="authStore.isAdmin"
-              >
-                <template #reference>
-                  <el-button 
-                    text 
-                    type="danger"
-                    :loading="dataSourceStore.isDeleting"
-                  >
-                    <el-icon><Delete /></el-icon>
-                    删除
-                  </el-button>
+                <el-button 
+                  text 
+                  type="info"
+                  :loading="testingConnections[row.id] || dataSourceStore.isDeleting"
+                >
+                  <el-icon><MoreFilled /></el-icon>
+                  更多
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="edit" icon="Edit">
+                      编辑
+                    </el-dropdown-item>
+                    <el-dropdown-item command="test" icon="Link" :disabled="testingConnections[row.id]">
+                      {{ testingConnections[row.id] ? '测试中...' : '测试连接' }}
+                    </el-dropdown-item>
+                    <el-dropdown-item 
+                      command="delete" 
+                      icon="Delete"
+                      :disabled="dataSourceStore.isDeleting"
+                      divided
+                    >
+                      删除
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
                 </template>
-              </el-popconfirm>
+              </el-dropdown>
             </div>
           </template>
         </el-table-column>
@@ -250,9 +245,7 @@ import {
   Box,
   Connection,
   View,
-  Link,
-  Edit,
-  Delete
+  MoreFilled
 } from '@element-plus/icons-vue'
 
 import { useAuthStore } from '@/stores/auth'
@@ -275,27 +268,30 @@ const testingConnections = ref<Record<string, boolean>>({})
 
 // 计算属性
 const filteredDataSources = computed(() => {
-  let result = dataSourceStore.dataSources.slice()
+  // 首先过滤掉 undefined 和 null 项
+  let result = dataSourceStore.dataSources.filter(ds => ds != null).slice()
   
   // 搜索过滤
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
     result = result.filter(ds => 
-      ds.name.toLowerCase().includes(query) ||
-      ds.cname.toLowerCase().includes(query) ||
-      ds.company?.toLowerCase().includes(query) ||
-      ds.desc?.toLowerCase().includes(query)
+      ds && ( // 额外的安全检查
+        ds.name?.toLowerCase().includes(query) ||
+        ds.cname?.toLowerCase().includes(query) ||
+        ds.company?.toLowerCase().includes(query) ||
+        ds.desc?.toLowerCase().includes(query)
+      )
     )
   }
   
   // 类型过滤
   if (filterType.value) {
-    result = result.filter(ds => ds.type === filterType.value)
+    result = result.filter(ds => ds && ds.type === filterType.value)
   }
   
   // 状态过滤
   if (filterStatus.value !== '') {
-    result = result.filter(ds => ds.is_active === filterStatus.value)
+    result = result.filter(ds => ds && ds.is_active === filterStatus.value)
   }
   
   // 排序
@@ -303,6 +299,11 @@ const filteredDataSources = computed(() => {
     result.sort((a, b) => {
       const aVal = a[sortField.value as keyof DataSource]
       const bVal = b[sortField.value as keyof DataSource]
+      
+      // 处理 undefined 值
+      if (aVal === undefined && bVal === undefined) return 0
+      if (aVal === undefined) return 1
+      if (bVal === undefined) return -1
       
       if (sortOrder.value === 'descending') {
         return aVal > bVal ? -1 : 1
@@ -387,6 +388,42 @@ const deleteDataSource = async (datasource: DataSource) => {
     ElMessage.success('数据源删除成功')
   } catch (error: any) {
     ElMessage.error(`删除数据源失败：${error.message}`)
+  }
+}
+
+// 处理管理员操作下拉菜单
+const handleAdminAction = async (command: string, row: DataSource) => {
+  switch (command) {
+    case 'edit':
+      editDataSource(row)
+      break
+    
+    case 'test':
+      if (!testingConnections.value[row.id]) {
+        await testConnection(row)
+      }
+      break
+    
+    case 'delete':
+      // 显示确认对话框
+      try {
+        await ElMessageBox.confirm(
+          '此操作将永久删除该数据源，是否继续？',
+          '确认删除',
+          {
+            confirmButtonText: '确定删除',
+            cancelButtonText: '取消',
+            type: 'warning',
+            confirmButtonClass: 'el-button--danger',
+          }
+        )
+        // 用户确认后执行删除
+        await deleteDataSource(row)
+      } catch {
+        // 用户取消删除，不做任何操作
+        ElMessage.info('已取消删除')
+      }
+      break
   }
 }
 
@@ -558,7 +595,29 @@ document.title = '数据源管理 - 数据浏览系统'
 
 .action-buttons {
   display: flex;
-  gap: 4px;
+  gap: 8px;
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+/* 下拉菜单项样式优化 */
+.el-dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.el-dropdown-menu__item .el-icon {
+  font-size: 14px;
+  width: 14px;
+  height: 14px;
+}
+
+/* 更多按钮样式 */
+.action-buttons .el-dropdown .el-button {
+  padding: 4px 8px;
+  font-size: 12px;
 }
 
 .pagination-wrapper {

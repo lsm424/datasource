@@ -10,6 +10,7 @@ import type {
   DatabaseColumn,
   DatabaseRecord,
   ObjectStorageObject,
+  Bucket,
   PaginatedResponse,
   ApiResponse
 } from '@/types/datasource'
@@ -165,25 +166,44 @@ export const databaseApi = {
   }
 }
 
-// 对象存储浏览相关API
+// 对象存储相关API
 export const objectStorageApi = {
+  // 获取存储桶列表
+  listBuckets: (dataSourceId: string): Promise<ApiResponse<Bucket[]>> => {
+    return get<ApiResponse<Bucket[]>>(`/browse/object_storage/${dataSourceId}/buckets`)
+  },
+
+  // 创建存储桶
+  createBucket: (dataSourceId: string, bucketName: string, region?: string): Promise<ApiResponse<Bucket>> => {
+    return post<ApiResponse<Bucket>>(`/browse/object_storage/${dataSourceId}/buckets`, {
+      name: bucketName,
+      region: region || 'us-east-1'
+    })
+  },
+
+  // 删除存储桶
+  deleteBucket: (dataSourceId: string, bucketName: string): Promise<ApiResponse> => {
+    return del<ApiResponse>(`/browse/object_storage/${dataSourceId}/buckets/${bucketName}`)
+  },
+
   // 获取对象列表
   listObjects: (
     dataSourceId: string, 
-    params?: { prefix?: string; delimiter?: string; marker?: string; maxKeys?: number }
+    bucketName: string,
+    params?: { prefix?: string; delimiter?: string; max_keys?: number }
   ): Promise<ApiResponse<ObjectStorageObject[]>> => {
-    return get<ApiResponse<ObjectStorageObject[]>>(`/browse/objectstorage/${dataSourceId}/objects`, {
+    return get<ApiResponse<ObjectStorageObject[]>>(`/browse/object_storage/${dataSourceId}/buckets/${bucketName}/objects`, {
       params
     })
   },
 
   // 上传文件
-  uploadFile: (dataSourceId: string, key: string, file: File): Promise<ApiResponse<ObjectStorageObject>> => {
+  uploadFile: (dataSourceId: string, bucketName: string, objectName: string, file: File): Promise<ApiResponse<any>> => {
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('key', key)
+    formData.append('object_name', objectName)
     
-    return post<ApiResponse<ObjectStorageObject>>(`/browse/objectstorage/${dataSourceId}/upload`, formData, {
+    return post<ApiResponse<any>>(`/browse/object_storage/${dataSourceId}/buckets/${bucketName}/objects`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
@@ -191,31 +211,24 @@ export const objectStorageApi = {
   },
 
   // 下载文件
-  downloadObject: (dataSourceId: string, key: string): Promise<Blob> => {
-    return get(`/browse/objectstorage/${dataSourceId}/download`, {
-      params: { key },
+  downloadObject: (dataSourceId: string, bucketName: string, objectName: string): Promise<Blob> => {
+    return get(`/browse/object_storage/${dataSourceId}/buckets/${bucketName}/objects/${objectName}`, {
       responseType: 'blob'
     })
   },
 
-  // 获取对象预签名URL
-  getPresignedUrl: (dataSourceId: string, key: string, expiration = 3600): Promise<ApiResponse<string>> => {
-    return get<ApiResponse<string>>(`/browse/objectstorage/${dataSourceId}/presigned-url`, {
-      params: { key, expiration }
-    })
-  },
-
   // 删除对象
-  deleteObject: (dataSourceId: string, key: string): Promise<ApiResponse> => {
-    return del<ApiResponse>(`/browse/objectstorage/${dataSourceId}/objects`, {
-      params: { key }
-    })
+  deleteObject: (dataSourceId: string, bucketName: string, objectName: string): Promise<ApiResponse> => {
+    return del<ApiResponse>(`/browse/object_storage/${dataSourceId}/buckets/${bucketName}/objects/${objectName}`)
   },
 
-  // 获取对象元数据
-  getObjectMetadata: (dataSourceId: string, key: string): Promise<ApiResponse<ObjectStorageObject>> => {
-    return get<ApiResponse<ObjectStorageObject>>(`/browse/objectstorage/${dataSourceId}/objects/metadata`, {
-      params: { key }
-    })
+  // 获取对象信息
+  getObjectInfo: (dataSourceId: string, bucketName: string, objectName: string): Promise<ApiResponse<ObjectStorageObject>> => {
+    return get<ApiResponse<ObjectStorageObject>>(`/browse/object_storage/${dataSourceId}/buckets/${bucketName}/objects/${objectName}/info`)
+  },
+
+  // 测试连接
+  testConnection: (dataSourceId: string): Promise<ApiResponse<any>> => {
+    return post<ApiResponse<any>>(`/browse/object_storage/${dataSourceId}/test`)
   }
 }

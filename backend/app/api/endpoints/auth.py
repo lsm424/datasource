@@ -84,7 +84,10 @@ async def login(
     user_data = UserInDB.model_validate(user)
     
     return DataResponse(
-        data=LoginResponse(user=user_data, token=token),
+        data={
+            "user": user_data.model_dump(mode='json'),  # 使用JSON序列化模式
+            "token": token.model_dump()
+        },
         message="登录成功"
     )
 
@@ -163,7 +166,10 @@ async def register(
     user_response = UserInDB.model_validate(new_user)
     
     return DataResponse(
-        data=LoginResponse(user=user_response, token=token),
+        data={
+            "user": user_response.model_dump(mode='json'),  # 使用JSON序列化模式
+            "token": token.model_dump()
+        },
         message="注册成功"
     )
 
@@ -231,7 +237,7 @@ async def logout(
     return BaseResponse(message="登出成功")
 
 
-@router.get("/me", response_model=DataResponse[UserInDB])
+@router.get("/me", response_model=DataResponse[dict])
 async def get_current_user_info(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
@@ -240,7 +246,7 @@ async def get_current_user_info(
     user_data = UserInDB.model_validate(current_user)
     
     return DataResponse(
-        data=user_data,
+        data=user_data.model_dump(mode='json'),  # 使用JSON序列化模式确保枚举转为字符串
         message="获取用户信息成功"
     )
 

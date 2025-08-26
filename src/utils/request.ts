@@ -2,6 +2,16 @@ import axios, { type InternalAxiosRequestConfig, type AxiosResponse, type AxiosR
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 
+// 动态导入auth store避免循环依赖
+let authStore: any = null
+const getAuthStore = async () => {
+  if (!authStore) {
+    const { useAuthStore } = await import('@/stores/auth')
+    authStore = useAuthStore()
+  }
+  return authStore
+}
+
 // 创建axios实例
 const request = axios.create({
   baseURL: 'http://localhost:8000/api/v1',
@@ -69,7 +79,7 @@ request.interceptors.response.use(
     // 否则直接返回原数据
     return data.data !== undefined ? data.data : data
   },
-  (error) => {
+  async (error) => {
     console.error('Response interceptor error:', error)
     
     if (error.response) {
@@ -77,10 +87,24 @@ request.interceptors.response.use(
       
       switch (status) {
         case 401:
-          // 未认证，清除token并跳转到登录页
+          // 未认证，清除所有认证状态并跳转到登录页
+          console.log('🚫 检测到401错误，清除认证状态')
           localStorage.removeItem('auth_token')
-          router.push('/login')
-          ElMessage.error('登录已过期，请重新登录')
+          
+          // 清除Pinia认证状态
+          try {
+            const store = await getAuthStore()
+            store.clearAuth()
+            console.log('✅ 已清除Pinia认证状态')
+          } catch (err) {
+            console.warn('⚠️ 清除Pinia状态失败:', err)
+          }
+          
+          // 避免重复跳转到登录页
+          if (router.currentRoute.value.path !== '/login') {
+            router.push('/login')
+            ElMessage.error('登录已过期，请重新登录')
+          }
           break
         case 403:
           ElMessage.error('没有权限访问该资源')

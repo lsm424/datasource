@@ -60,7 +60,7 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: '数据库浏览' }
       },
       {
-        path: '/browse/objectstorage/:id',
+        path: '/browse/object_storage/:id',
         name: 'ObjectStorageBrowser',
         component: () => import('@/views/browser/ObjectStorageBrowser.vue'),
         meta: { title: '对象存储浏览' }
@@ -125,6 +125,14 @@ router.beforeEach(async (to, from, next) => {
   if (to.meta.requiresAuth !== false) {
     if (!authStore.isAuthenticated) {
       console.log('❌ 未认证，重定向到登录页')
+      next('/login')
+      return
+    }
+    
+    // 额外检查：验证token有效性
+    if (authStore.token && authStore.isTokenExpired()) {
+      console.log('⏰ Token已过期，重定向到登录页')
+      authStore.clearAuth()
       next('/login')
       return
     }

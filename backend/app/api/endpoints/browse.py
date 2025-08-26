@@ -1,10 +1,11 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import io
 import pymysql
 import logging
+import json
 
 from app.core.database import get_db
 from app.core.deps import get_current_active_user
@@ -18,8 +19,32 @@ from app.schemas.datasource import (
     ObjectStorageObject
 )
 from app.schemas.base import DataResponse, ListResponse
+from app.schemas.minio import (
+    BucketInfo,
+    ObjectInfo,
+    CreateBucketRequest,
+    ListObjectsQuery,
+    UploadResult,
+    MinIOConnectionTest
+)
+from app.services.minio_service import create_minio_service
 
 router = APIRouter()
+
+
+def parse_datasource_config(config):
+    """解析数据源配置，确保返回字典格式"""
+    if isinstance(config, str):
+        try:
+            return json.loads(config)
+        except json.JSONDecodeError:
+            raise Exception("数据源配置JSON格式无效")
+    elif isinstance(config, dict):
+        return config
+    elif config is None:
+        raise Exception("数据源配置为空")
+    else:
+        raise Exception(f"数据源配置类型无效: {type(config)}")
 
 # 数据库连接工具函数
 def create_mysql_connection(config: dict):
@@ -492,15 +517,15 @@ async def get_table_schema(
         )
 
 
-@router.get("/objectstorage/{datasource_id}/objects", response_model=DataResponse[List[ObjectStorageObject]])
-async def list_objects(
+# MinIO对象存储API端点
+
+@router.get("/object_storage/{datasource_id}/buckets", response_model=DataResponse[List[BucketInfo]])
+async def list_buckets(
     datasource_id: str,
-    prefix: str = Query("", description="对象前缀"),
-    max_keys: int = Query(100, ge=1, le=1000, description="最大返回数量"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Any:
-    """获取对象存储对象列表"""
+    """获取对象存储桶列表"""
     
     # 验证数据源
     datasource = db.query(DataSource).filter(
@@ -515,36 +540,439 @@ async def list_objects(
         )
     
     try:
-        # TODO: 实现对象存储对象列表获取逻辑
-        from datetime import datetime
+        # 解析配置并创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
         
-        # 模拟数据
-        objects = [
-            ObjectStorageObject(
-                key=f"{prefix}document1.pdf",
-                size=1024000,
-                last_modified=datetime.now(),
-                etag="abc123",
-                content_type="application/pdf"
-            ),
-            ObjectStorageObject(
-                key=f"{prefix}image.jpg",
-                size=512000,
-                last_modified=datetime.now(),
-                etag="def456",
-                content_type="image/jpeg"
-            ),
-        ]
+        # 获取存储桶列表
+        buckets = minio_service.list_buckets()
+        
+        # 转换为BucketInfo格式
+        bucket_list = [BucketInfo(**bucket) for bucket in buckets]
         
         return DataResponse(
-            data=objects,
-            message="获取对象列表成功"
+            data=bucket_list,
+            message=f"获取存储桶列表成功，共找到 {len(bucket_list)} 个存储桶"
         )
         
     except Exception as e:
+        logging.error(f"获取存储桶列表失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取存储桶列表失败: {str(e)}"
+        )
+
+
+@router.post("/object_storage/{datasource_id}/buckets", response_model=DataResponse[BucketInfo])
+async def create_bucket(
+    datasource_id: str,
+    request: CreateBucketRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """创建存储桶"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 创建存储桶
+        success = minio_service.create_bucket(request.name, request.region)
+        
+        if success:
+            bucket_info = BucketInfo(
+                name=request.name,
+                region=request.region,
+                creation_date=None
+            )
+            
+            return DataResponse(
+                data=bucket_info,
+                message=f"存储桶 '{request.name}' 创建成功"
+            )
+        else:
+            raise Exception("创建存储桶失败")
+            
+    except Exception as e:
+        logging.error(f"创建存储桶失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"创建存储桶失败: {str(e)}"
+        )
+
+
+@router.delete("/object_storage/{datasource_id}/buckets/{bucket_name}")
+async def delete_bucket(
+    datasource_id: str,
+    bucket_name: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """删除存储桶"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 删除存储桶
+        success = minio_service.delete_bucket(bucket_name)
+        
+        if success:
+            return DataResponse(
+                data={"success": True},
+                message=f"存储桶 '{bucket_name}' 删除成功"
+            )
+        else:
+            raise Exception("删除存储桶失败")
+            
+    except Exception as e:
+        logging.error(f"删除存储桶失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"删除存储桶失败: {str(e)}"
+        )
+
+
+@router.get("/object_storage/{datasource_id}/buckets/{bucket_name}/objects", response_model=DataResponse[List[ObjectInfo]])
+async def list_objects(
+    datasource_id: str,
+    bucket_name: str,
+    prefix: str = Query("", description="对象前缀"),
+    delimiter: str = Query("", description="分隔符"),
+    max_keys: int = Query(1000, ge=1, le=10000, description="最大返回数量"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """获取存储桶中的对象列表"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 获取对象列表
+        objects = minio_service.list_objects(bucket_name, prefix, delimiter, max_keys)
+        
+        # 转换为ObjectInfo格式
+        object_list = [ObjectInfo(**obj) for obj in objects]
+        
+        return DataResponse(
+            data=object_list,
+            message=f"获取对象列表成功，共找到 {len(object_list)} 个对象"
+        )
+        
+    except Exception as e:
+        logging.error(f"获取对象列表失败: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取对象列表失败: {str(e)}"
+        )
+
+
+@router.post("/object_storage/{datasource_id}/buckets/{bucket_name}/objects", response_model=DataResponse[UploadResult])
+async def upload_object(
+    datasource_id: str,
+    bucket_name: str,
+    file: UploadFile = File(...),
+    object_name: str = Form(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """上传对象到存储桶"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 上传文件
+        file_content = await file.read()
+        file_stream = io.BytesIO(file_content)
+        
+        result = minio_service.upload_object(
+            bucket_name=bucket_name,
+            object_name=object_name,
+            file_data=file_stream,
+            content_type=file.content_type or "application/octet-stream"
+        )
+        
+        upload_result = UploadResult(
+            bucket_name=result["bucket_name"],
+            object_name=result["object_name"],
+            etag=result["etag"],
+            version_id=result.get("version_id"),
+            size=len(file_content)
+        )
+        
+        return DataResponse(
+            data=upload_result,
+            message=f"文件 '{object_name}' 上传成功"
+        )
+        
+    except Exception as e:
+        logging.error(f"上传对象失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"上传对象失败: {str(e)}"
+        )
+
+
+@router.get("/object_storage/{datasource_id}/buckets/{bucket_name}/objects/{object_name}")
+async def download_object(
+    datasource_id: str,
+    bucket_name: str,
+    object_name: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> StreamingResponse:
+    """下载对象"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 获取对象信息
+        obj_info = minio_service.get_object_info(bucket_name, object_name)
+        
+        # 下载对象
+        response = minio_service.download_object(bucket_name, object_name)
+        
+        def iterfile():
+            try:
+                for chunk in response.stream(1024):
+                    yield chunk
+            finally:
+                response.close()
+                response.release_conn()
+        
+        return StreamingResponse(
+            iterfile(),
+            media_type=obj_info.get("content_type", "application/octet-stream"),
+            headers={
+                "Content-Disposition": f"attachment; filename={object_name}",
+                "Content-Length": str(obj_info.get("size", 0))
+            }
+        )
+        
+    except Exception as e:
+        logging.error(f"下载对象失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"下载对象失败: {str(e)}"
+        )
+
+
+@router.delete("/object_storage/{datasource_id}/buckets/{bucket_name}/objects/{object_name}")
+async def delete_object(
+    datasource_id: str,
+    bucket_name: str,
+    object_name: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """删除对象"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 删除对象
+        success = minio_service.delete_object(bucket_name, object_name)
+        
+        if success:
+            return DataResponse(
+                data={"success": True},
+                message=f"对象 '{object_name}' 删除成功"
+            )
+        else:
+            raise Exception("删除对象失败")
+            
+    except Exception as e:
+        logging.error(f"删除对象失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"删除对象失败: {str(e)}"
+        )
+
+
+@router.get("/object_storage/{datasource_id}/buckets/{bucket_name}/objects/{object_name}/info", response_model=DataResponse[ObjectInfo])
+async def get_object_info(
+    datasource_id: str,
+    bucket_name: str,
+    object_name: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """获取对象信息"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 获取对象信息
+        obj_info = minio_service.get_object_info(bucket_name, object_name)
+        
+        object_info = ObjectInfo(
+            key=obj_info["object_name"],
+            size=obj_info["size"],
+            last_modified=obj_info["last_modified"],
+            etag=obj_info["etag"],
+            content_type=obj_info["content_type"],
+            metadata=obj_info["metadata"]
+        )
+        
+        return DataResponse(
+            data=object_info,
+            message="获取对象信息成功"
+        )
+        
+    except Exception as e:
+        logging.error(f"获取对象信息失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取对象信息失败: {str(e)}"
+        )
+
+
+@router.post("/object_storage/{datasource_id}/test", response_model=DataResponse[MinIOConnectionTest])
+async def test_minio_connection(
+    datasource_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """测试MinIO连接"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 测试连接
+        result = minio_service.test_connection()
+        
+        connection_test = MinIOConnectionTest(
+            success=result["success"],
+            message=result["message"],
+            details=result.get("details", {})
+        )
+        
+        return DataResponse(
+            data=connection_test,
+            message="连接测试完成"
+        )
+        
+    except Exception as e:
+        logging.error(f"MinIO连接测试失败: {e}")
+        connection_test = MinIOConnectionTest(
+            success=False,
+            message=f"连接测试失败: {str(e)}",
+            details={"error": str(e)}
+        )
+        
+        return DataResponse(
+            data=connection_test,
+            message="连接测试失败"
         )
 
 

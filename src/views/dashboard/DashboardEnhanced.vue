@@ -627,11 +627,11 @@ const navigateToDataSource = (dataSource: DataSource) => {
   const routeTypeMap: Record<string, string> = {
     filesystem: 'filesystem',
     database: 'database',
-    objectstorage: 'objectstorage'
+    object_storage: 'object_storage'
   }
   
   const routeType = routeTypeMap[dataSource.type] || dataSource.type
-  router.push(`/browser/${routeType}/${dataSource.id}`)
+  router.push(`/browse/${routeType}/${dataSource.id}`)
 }
 
 const formatRelativeTime = (dateStr: string): string => {

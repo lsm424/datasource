@@ -14,7 +14,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   // 计算属性
   const isAuthenticated = computed(() => !!token.value && !!user.value)
-  const isAdmin = computed(() => user.value?.role === 'admin')
+  const isAdmin = computed(() => {
+    const userRole = user.value?.role
+    // 处理两种可能的角色格式：字符串 "admin" 或枚举对象 UserRole.ADMIN
+    return userRole === 'admin' || 
+           (userRole && typeof userRole === 'object' && 
+            (userRole.toString() === 'UserRole.ADMIN' || userRole.value === 'admin'))
+  })
   const currentUser = computed(() => user.value)
 
   // 初始化认证状态
@@ -43,6 +49,13 @@ export const useAuthStore = defineStore('auth', () => {
         console.log('🔐 Auth Store: 本地Token状态:', savedToken ? `存在(${savedToken.length}字符)` : '不存在')
         
         if (savedToken) {
+          // 检查token是否过期
+          if (isTokenExpired()) {
+            console.log('⏰ Auth Store: 检测到token已过期，清除认证状态')
+            clearAuth()
+            return
+          }
+          
           token.value = savedToken
           console.log('✅ Auth Store: Token已设置到store')
           
@@ -95,6 +108,7 @@ export const useAuthStore = defineStore('auth', () => {
       // 保存到本地存储
       if (loginData.token.access_token) {
         localStorage.setItem('auth_token', loginData.token.access_token)
+        localStorage.setItem('auth_token_timestamp', Date.now().toString())
         console.log('💾 Auth Store: Token已保存到localStorage')
       } else {
         console.error('❌ Auth Store: 登录响应中没有access_token!')
@@ -129,6 +143,7 @@ export const useAuthStore = defineStore('auth', () => {
       // 保存到本地存储
       if (registerData.token.access_token) {
         localStorage.setItem('auth_token', registerData.token.access_token)
+        localStorage.setItem('auth_token_timestamp', Date.now().toString())
       }
       
       return registerData
@@ -148,11 +163,51 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // 验证token有效性
+  const validateToken = async () => {
+    if (!token.value) {
+      return false
+    }
+    
+    try {
+      // 尝试获取当前用户信息来验证token
+      const userData = await authApi.getCurrentUser()
+      if (userData) {
+        // 更新用户信息（可能有变化）
+        user.value = userData
+        return true
+      }
+      return false
+    } catch (error) {
+      console.warn('⚠️ Token验证失败:', error)
+      // Token无效，清除认证状态
+      clearAuth()
+      return false
+    }
+  }
+
+  // 检查token是否过期（基于localStorage的时间戳）
+  const isTokenExpired = () => {
+    const tokenTimestamp = localStorage.getItem('auth_token_timestamp')
+    if (!tokenTimestamp) {
+      return true
+    }
+    
+    // 假设token有效期为60分钟（可以从后端配置获取）
+    const tokenValidityPeriod = 60 * 60 * 1000 // 60分钟
+    const now = Date.now()
+    const tokenAge = now - parseInt(tokenTimestamp)
+    
+    return tokenAge > tokenValidityPeriod
+  }
+
   // 清除认证状态
   const clearAuth = () => {
+    console.log('🧹 清除认证状态')
     user.value = null
     token.value = ''
     localStorage.removeItem('auth_token')
+    localStorage.removeItem('auth_token_timestamp')
     isInitializing.value = false
     initPromise = null
   }
@@ -182,6 +237,8 @@ export const useAuthStore = defineStore('auth', () => {
     register,
     logout,
     clearAuth,
-    updateUser
+    updateUser,
+    validateToken,
+    isTokenExpired
   }
 })

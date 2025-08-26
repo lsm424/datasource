@@ -109,8 +109,9 @@ def get_session() -> Session:
 def check_database_connection() -> bool:
     """检查数据库连接是否正常"""
     try:
+        from sqlalchemy import text
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
         return True
     except Exception as e:
         print(f"Database connection failed: {e}")

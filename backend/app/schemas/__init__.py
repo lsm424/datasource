@@ -55,6 +55,15 @@ from .datasource import (
     DataSourceListQuery
 )
 
+from .minio import (
+    BucketInfo,
+    ObjectInfo,
+    CreateBucketRequest,
+    ListObjectsQuery,
+    UploadResult,
+    MinIOConnectionTest
+)
+
 __all__ = [
     # 基础schemas
     "BaseResponse",
@@ -102,5 +111,13 @@ __all__ = [
     "DatabaseTable",
     "DatabaseColumn",
     "ObjectStorageObject",
-    "DataSourceListQuery"
+    "DataSourceListQuery",
+    
+    # MinIO schemas
+    "BucketInfo",
+    "ObjectInfo",
+    "CreateBucketRequest",
+    "ListObjectsQuery",
+    "UploadResult",
+    "MinIOConnectionTest"
 ]
