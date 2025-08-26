@@ -38,7 +38,7 @@ export const useDataSourceStore = defineStore('datasource', () => {
     isLoading.value = true
     try {
       const response = await dataSourceApi.getDataSources()
-      console.log('📊 DataSource Store: API响应', response)
+
       
       // 处理分页响应结构：response可能是数组（已处理）或分页对象（未处理）
       let dataArray: any[] = []
@@ -46,18 +46,18 @@ export const useDataSourceStore = defineStore('datasource', () => {
       if (Array.isArray(response)) {
         // 响应拦截器已经处理，直接是数组
         dataArray = response
-        console.log('📊 DataSource Store: 收到处理后的数组响应')
+
       } else if (response && response.data && Array.isArray(response.data)) {
         // 响应是分页对象，提取data字段
         dataArray = response.data
-        console.log('📊 DataSource Store: 收到分页响应，提取data数组')
+
       } else {
         console.warn('⚠️ DataSource Store: 响应数据格式异常', response)
         dataArray = []
       }
       
       dataSources.value = dataArray
-      console.log('✅ DataSource Store: 数据源列表更新成功', dataArray.length, '个数据源')
+
       return response
     } catch (error) {
       console.error('❌ DataSource Store: 获取数据源列表失败', error)
@@ -72,22 +72,20 @@ export const useDataSourceStore = defineStore('datasource', () => {
   const fetchDataSourceById = async (id: string) => {
     isLoading.value = true
     try {
-      console.log('📡 DataSource Store: 调用getDataSourceById API, ID:', id)
       const response = await dataSourceApi.getDataSourceById(id)
-      console.log('📨 DataSource Store: getDataSourceById响应:', response)
       
       currentDataSource.value = response.data || response
-      console.log('✅ DataSource Store: 数据源详情获取成功:', currentDataSource.value)
+
       return currentDataSource.value
     } catch (error) {
       console.error('❌ DataSource Store: 获取数据源详情失败:', error)
       
       // 如果API失败，尝试从当前数据源列表中查找
-      console.log('🔄 DataSource Store: 尝试从缓存列表中查找数据源')
+
       if (Array.isArray(dataSources.value)) {
         const found = dataSources.value.find(ds => ds.id === id)
         if (found) {
-          console.log('✅ DataSource Store: 从缓存中找到数据源:', found)
+
           currentDataSource.value = found
           return found
         }
@@ -103,16 +101,12 @@ export const useDataSourceStore = defineStore('datasource', () => {
   const createDataSource = async (form: CreateDataSourceForm) => {
     isCreating.value = true
     try {
-      console.log('📝 DataSource Store: 开始创建数据源', form)
       const response = await dataSourceApi.createDataSource(form)
-      console.log('✅ DataSource Store: 创建数据源响应', response)
       
       // 检查响应数据结构
       const newDataSource = response.data || response
       if (newDataSource && newDataSource.id) {
-        console.log('📊 DataSource Store: 新数据源数据', newDataSource)
         dataSources.value.push(newDataSource)
-        console.log('📋 DataSource Store: 当前数据源列表', dataSources.value.length, '个数据源')
       } else {
         console.error('❌ DataSource Store: 无效的响应数据', response)
         console.warn('⚠️ DataSource Store: 创建响应数据无效，刷新列表')

@@ -50,13 +50,6 @@ def parse_datasource_config(config):
 def create_mysql_connection(config: dict):
     """创建MySQL数据库连接"""
     try:
-        print(f"🔧 创建MySQL连接，配置信息:")
-        print(f"  - host: {config.get('host', 'localhost')}")
-        print(f"  - port: {config.get('port', 3306)}")
-        print(f"  - user: {config.get('user', 'root')}")
-        print(f"  - database: {config.get('database', '')}")
-        print(f"  - charset: {config.get('charset', 'utf8mb4')}")
-        
         connection = pymysql.connect(
             host=config.get('host', 'localhost'),
             port=config.get('port', 3306),
@@ -66,11 +59,8 @@ def create_mysql_connection(config: dict):
             charset=config.get('charset', 'utf8mb4'),
             autocommit=True
         )
-        print(f"✅ MySQL连接创建成功")
         return connection
     except Exception as e:
-        print(f"❌ 创建MySQL连接失败: {e}")
-        print(f"❌ 错误类型: {type(e).__name__}")
         logging.error(f"创建MySQL连接失败: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -80,20 +70,15 @@ def create_mysql_connection(config: dict):
 def get_mysql_tables(connection):
     """获取MySQL数据库的表列表"""
     try:
-        print(f"📋 开始获取MySQL表列表...")
         with connection.cursor(pymysql.cursors.DictCursor) as cursor:
             # 执行SHOW TABLES命令
             sql_query = "SHOW TABLES"
-            print(f"🔍 执行SQL: {sql_query}")
             cursor.execute(sql_query)
             tables_result = cursor.fetchall()
-            print(f"📨 SHOW TABLES 结果: {tables_result}")
-            print(f"📊 找到 {len(tables_result)} 个表")
             
             tables = []
             for i, row in enumerate(tables_result):
                 table_name = list(row.values())[0]  # 获取表名
-                print(f"  [{i+1}] 处理表: {table_name}")
                 
                 # 获取表的行数和注释
                 info_sql = """
@@ -104,11 +89,8 @@ def get_mysql_tables(connection):
                     WHERE TABLE_SCHEMA = DATABASE() 
                     AND TABLE_NAME = %s
                 """
-                print(f"🔍 执行表信息查询SQL: {info_sql}")
-                print(f"🔍 参数: {table_name}")
                 cursor.execute(info_sql, (table_name,))
                 table_info = cursor.fetchone()
-                print(f"📨 表信息查询结果: {table_info}")
                 
                 table_obj = DatabaseTable(
                     name=table_name,
@@ -117,17 +99,12 @@ def get_mysql_tables(connection):
                     comment=table_info['comment'] if table_info and table_info['comment'] else None
                 )
                 tables.append(table_obj)
-                print(f"✅ 表 {table_name} 处理完成: {table_obj.row_count} 行")
             
-            print(f"🎉 成功获取所有表信息，共 {len(tables)} 个表")
             return tables
     except Exception as e:
-        print(f"❌ 获取MySQL表列表失败: {e}")
-        print(f"❌ 错误类型: {type(e).__name__}")
-        import traceback
-        print(f"❌ 详细错误信息:")
-        traceback.print_exc()
         logging.error(f"获取MySQL表列表失败: {e}")
+        import traceback
+        logging.error(f"详细错误信息: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取表列表失败: {str(e)}"
@@ -379,26 +356,11 @@ async def list_database_tables(
         )
     
     try:
-        # 添加调试信息
-        print("=" * 80)
-        print("🎯 LIST DATABASE TABLES API CALLED!")
-        print("=" * 80)
-        print(f"📞 函数: list_database_tables")
-        print(f"🆔 datasource_id: {datasource_id}")
-        print(f"🗄️ database: {database}")
-        print(f"👤 current_user: {current_user.username if current_user else 'None'}")
-        print("=" * 80)
-        
-        # 实现数据库表列表获取逻辑
-        print(f"🚀 开始获取数据库表列表...")
-        print(f"📋 数据源名称: {datasource.name}")
-        print(f"🏷️ 数据源类型: {datasource.type}")
-        print(f"⚙️ 数据源配置: {datasource.config}")
+
         
         # 解析数据源配置
         db_config = datasource.config
         if not db_config:
-            print(f"❌ 数据源配置为空!")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="数据源配置信息不完整"
@@ -407,23 +369,16 @@ async def list_database_tables(
         # 根据数据库类型获取表列表
         tables = []
         db_type = db_config.get('db_type')
-        print(f"🗄️ 检测到数据库类型: {db_type}")
         
         if db_type == 'MySQL':
-            print(f"✅ 数据库类型匹配MySQL，开始连接...")
             connection = None
             try:
                 connection = create_mysql_connection(db_config)
                 tables = get_mysql_tables(connection)
-                print(f"🎉 成功获取MySQL表列表，共{len(tables)}个表")
-                for i, table in enumerate(tables):
-                    print(f"  [{i+1}] {table.name} ({table.row_count}行) - {table.comment or '无注释'}")
             finally:
                 if connection:
-                    print(f"🔒 关闭MySQL连接")
                     connection.close()
         else:
-            print(f"❌ 暂不支持的数据库类型: {db_type}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"暂不支持的数据库类型: {db_type}"
@@ -450,13 +405,6 @@ async def get_table_schema(
     db: Session = Depends(get_db)
 ) -> Any:
     """获取数据库表结构"""
-    print("=" * 80)
-    print("🎯 GET TABLE SCHEMA API CALLED!")
-    print("=" * 80)
-    print(f"📞 函数: get_table_schema")
-    print(f"🆔 datasource_id: {datasource_id}")
-    print(f"📋 table_name: {table_name}")
-    print(f"🗄️  database: {database}")
     
     # 验证数据源
     datasource = db.query(DataSource).filter(
@@ -470,14 +418,12 @@ async def get_table_schema(
             detail="数据库数据源不存在"
         )
     
-    print(f"✅ 找到数据源: {datasource.name}")
-    print(f"🔧 数据源配置: {datasource.config}")
+
     
     try:
         # 解析数据源配置
         db_config = datasource.config
         if not db_config:
-            print("❌ 数据源配置信息不完整")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="数据源配置信息不完整"
@@ -486,20 +432,14 @@ async def get_table_schema(
         # 根据数据库类型获取表结构
         columns = []
         if db_config.get('db_type') == 'MySQL':
-            print(f"🔗 连接MySQL数据库获取表 {table_name} 的结构...")
             connection = None
             try:
                 connection = create_mysql_connection(db_config)
                 columns = get_mysql_table_schema(connection, table_name)
-                print(f"✅ 成功获取表结构，共{len(columns)}个字段")
-                for col in columns:
-                    print(f"  - {col.name}: {col.type} (primary: {col.is_primary_key}, nullable: {col.nullable})")
             finally:
                 if connection:
                     connection.close()
-                    print("🔌 已关闭数据库连接")
         else:
-            print(f"❌ 暂不支持的数据库类型: {db_config.get('db_type')}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"暂不支持的数据库类型: {db_config.get('db_type')}"

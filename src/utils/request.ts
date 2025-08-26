@@ -27,22 +27,11 @@ request.interceptors.request.use(
     // 直接从localStorage获取token，避免Pinia响应式问题
     const token = localStorage.getItem('auth_token')
     
-    console.log('🔐 请求拦截器 - Token状态:', {
-      url: config.url,
-      method: config.method?.toUpperCase(),
-      hasToken: !!token,
-      tokenLength: token ? token.length : 0,
-      tokenSource: 'localStorage'
-    })
-    
     if (token) {
       config.headers = {
         ...config.headers,
         Authorization: `Bearer ${token}`,
       }
-      console.log('✅ 已添加Authorization头:', `Bearer ${token.substring(0, 20)}...`)
-    } else {
-      console.log('❌ localStorage中没有token，未添加Authorization头')
     }
     
     return config
@@ -57,11 +46,6 @@ request.interceptors.request.use(
 request.interceptors.response.use(
   (response: AxiosResponse) => {
     const { data } = response
-    console.log('📡 HTTP响应:', {
-      url: response.config.url,
-      status: response.status,
-      data: data
-    })
     
     // 如果是直接下载文件等场景，直接返回
     if (response.config.responseType === 'blob' || response.config.responseType === 'arraybuffer') {
@@ -70,7 +54,7 @@ request.interceptors.response.use(
     
     // 检查业务状态码
     if (data.code !== undefined && data.code !== 200) {
-      console.error('❌ 业务错误:', data)
+      console.error('业务错误:', data)
       ElMessage.error(data.message || '请求失败')
       return Promise.reject(new Error(data.message || '请求失败'))
     }

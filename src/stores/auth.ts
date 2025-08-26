@@ -27,54 +27,52 @@ export const useAuthStore = defineStore('auth', () => {
   const initAuth = async () => {
     // 如果正在初始化，等待完成
     if (isInitializing.value && initPromise) {
-      console.log('⏳ Auth Store: 认证正在初始化中，等待完成...')
+
       await initPromise
-      console.log('✅ Auth Store: 等待的认证初始化已完成')
+
       return
     }
     
     // 如果已经有用户信息，跳过初始化
     if (user.value && token.value) {
-      console.log('✅ Auth Store: 认证状态已存在，跳过初始化')
+
       return
     }
     
     // 创建初始化Promise
     initPromise = (async () => {
       isInitializing.value = true
-      console.log('🔄 Auth Store: 开始初始化认证状态...')
+
       
       try {
         const savedToken = localStorage.getItem('auth_token')
-        console.log('🔐 Auth Store: 本地Token状态:', savedToken ? `存在(${savedToken.length}字符)` : '不存在')
+
         
         if (savedToken) {
           // 检查token是否过期
           if (isTokenExpired()) {
-            console.log('⏰ Auth Store: 检测到token已过期，清除认证状态')
+
             clearAuth()
             return
           }
           
           token.value = savedToken
-          console.log('✅ Auth Store: Token已设置到store')
+
           
           try {
-            console.log('🌐 Auth Store: 调用getCurrentUser API...')
+
             const userData = await authApi.getCurrentUser()
-            console.log('📨 Auth Store: getCurrentUser响应:', userData)
-            console.log('🔍 Auth Store: 响应数据类型:', typeof userData, Array.isArray(userData))
+
             
             user.value = userData
-            console.log('✅ Auth Store: 用户信息已设置:', user.value)
-            console.log('🔐 Auth Store: 认证状态检查 - token:', !!token.value, 'user:', !!user.value, 'isAuthenticated:', isAuthenticated.value)
+
           } catch (error) {
             console.error('❌ Auth Store: getCurrentUser失败:', error)
             // Token可能已过期，清除本地存储
             clearAuth()
           }
         } else {
-          console.log('ℹ️ Auth Store: 没有保存的token，跳过认证初始化')
+
         }
       } finally {
         isInitializing.value = false
@@ -87,38 +85,27 @@ export const useAuthStore = defineStore('auth', () => {
 
   // 登录
   const login = async (loginForm: LoginForm) => {
-    console.log('🏪 Auth Store: 开始登录...')
     isLoading.value = true
     try {
-      console.log('🌐 Auth Store: 调用登录API...')
       const response = await authApi.login(loginForm)
-      console.log('📨 Auth Store: API响应:', response)
       
       // 处理后端返回的数据格式：{code, message, data: {token, user}}
       const loginData = response.data || response
       token.value = loginData.token.access_token // 修复：提取access_token字符串
       user.value = loginData.user
       
-      console.log('🔧 解析后的登录数据:', {
-        access_token: loginData.token.access_token ? '存在' : '不存在',
-        token_type: loginData.token.token_type,
-        user: loginData.user
-      })
+
       
       // 保存到本地存储
       if (loginData.token.access_token) {
         localStorage.setItem('auth_token', loginData.token.access_token)
         localStorage.setItem('auth_token_timestamp', Date.now().toString())
-        console.log('💾 Auth Store: Token已保存到localStorage')
+
       } else {
         console.error('❌ Auth Store: 登录响应中没有access_token!')
       }
       
-      console.log('✅ Auth Store: 登录状态更新完成:', {
-        user: user.value,
-        isAuthenticated: isAuthenticated.value,
-        tokenExists: !!token.value
-      })
+
       
       return loginData
     } catch (error) {
@@ -203,7 +190,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   // 清除认证状态
   const clearAuth = () => {
-    console.log('🧹 清除认证状态')
+
     user.value = null
     token.value = ''
     localStorage.removeItem('auth_token')

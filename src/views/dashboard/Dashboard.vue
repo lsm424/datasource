@@ -390,15 +390,7 @@ const refreshStats = async () => {
     stats.totalRecords = dashboardStats.total_records || 0
     stats.statsDate = dashboardStats.stats_date || null
     
-    console.log('📊 Dashboard: 统计数据更新完成', {
-      dataSources: stats.totalDataSources,
-      users: stats.totalUsers,
-      dataSize: stats.totalDataSize,
-      files: stats.totalFiles,
-      records: stats.totalRecords,
-      statsDate: stats.statsDate,
-      isAdmin: dashboardStats.is_admin
-    })
+
   } catch (error) {
     console.error('❌ Dashboard: 获取统计数据失败', error)
     ElMessage.error('获取统计数据失败')
@@ -414,7 +406,7 @@ const refreshSystemStatus = async () => {
     systemStatus.database = statusData.database
     systemStatus.cache = statusData.cache
     
-    console.log('📊 Dashboard: 系统状态更新完成', statusData)
+
   } catch (error) {
     console.error('❌ Dashboard: 获取系统状态失败', error)
   }

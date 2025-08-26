@@ -466,7 +466,7 @@ const refreshStats = async () => {
     stats.totalRecords = dashboardStats.total_records || 0
     stats.statsDate = dashboardStats.stats_date || null
     
-    console.log('📊 Dashboard: 统计数据更新完成', dashboardStats)
+
   } catch (error) {
     console.error('❌ Dashboard: 获取统计数据失败', error)
     ElMessage.error('获取统计数据失败')
@@ -497,7 +497,7 @@ const refreshTypeDistribution = async () => {
     typeDistribution.value = data.distribution || []
     typeDistributionStatsDate.value = data.stats_date
     
-    console.log('📊 Dashboard: 数据类型分布更新完成', data)
+
   } catch (error) {
     console.error('❌ Dashboard: 获取数据类型分布失败', error)
   }
@@ -512,7 +512,7 @@ const refreshDatasourceDistribution = async () => {
     datasourceDistribution.value = data.distribution || []
     datasourceDistributionStatsDate.value = data.stats_date
     
-    console.log('📊 Dashboard: 数据源分布更新完成', data)
+
   } catch (error) {
     console.error('❌ Dashboard: 获取数据源分布失败', error)
   }
@@ -531,7 +531,7 @@ const runManualStats = async () => {
     const result = response.data || response
     
     ElMessage.success('统计任务已启动，请稍后查看结果')
-    console.log('📊 Dashboard: 统计任务启动成功', result)
+
     
     // 等待几秒后刷新数据
     setTimeout(() => {

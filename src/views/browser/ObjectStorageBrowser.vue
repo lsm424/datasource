@@ -496,28 +496,20 @@ const canGoBack = computed(() => {
 
 // 生命周期
 onMounted(async () => {
-  console.log('🚀 对象存储浏览: 开始初始化')
-  
   await loadDataSource()
   
   const bucket = route.query.bucket as string
   const prefix = route.query.prefix as string
   const configuredBucket = dataSource.value?.config?.bucket
   
-  console.log('📋 状态检查:')
-  console.log('   URL bucket参数:', bucket)
-  console.log('   配置的bucket:', configuredBucket)
-  
   // 优先使用URL查询参数中的bucket
   if (bucket) {
-    console.log('✅ 使用URL参数中的bucket:', bucket)
     currentBucket.value = bucket
     currentPrefix.value = prefix || ''
     await loadObjects()
   } 
   // 如果URL中没有bucket，检查数据源配置中是否指定了bucket
   else if (configuredBucket) {
-    console.log('🎯 使用配置中的存储桶:', configuredBucket)
     currentBucket.value = configuredBucket
     currentPrefix.value = ''
     // 更新URL以反映当前状态
@@ -528,7 +520,6 @@ onMounted(async () => {
   } 
   // 如果既没有URL参数也没有配置中的bucket，显示所有buckets
   else {
-    console.log('📂 没有配置特定bucket，显示所有buckets')
     await loadBuckets()
   }
 })
@@ -538,15 +529,7 @@ watch(() => route.query, async (newQuery) => {
   const bucket = newQuery.bucket as string
   const prefix = newQuery.prefix as string
   
-  console.log('🔄 路由变化监听:', { 
-    bucket, 
-    prefix, 
-    currentBucket: currentBucket.value, 
-    currentPrefix: currentPrefix.value 
-  })
-  
   if (bucket !== currentBucket.value) {
-    console.log('🪣 存储桶变化')
     currentBucket.value = bucket || ''
     if (bucket) {
       currentPrefix.value = prefix || ''
@@ -562,14 +545,8 @@ watch(() => route.query, async (newQuery) => {
       await loadBuckets()
     }
   } else if (prefix !== currentPrefix.value) {
-    console.log('📂 路由前缀变化:', `"${currentPrefix.value}" -> "${prefix}"`)
     currentPrefix.value = prefix || ''
-    // 只有当prefix真正不同时才重新加载
-    // 这避免了与手动点击导致的重复加载
-    console.log('📂 路由监听器触发数据加载')
     await loadObjects()
-  } else {
-    console.log('🔄 路由变化但状态已同步，无需刷新数据')
   }
 })
 
@@ -577,38 +554,22 @@ watch(() => route.query, async (newQuery) => {
 async function loadDataSource() {
   try {
     const id = route.params.id as string
-    console.log('🔍 对象存储浏览: 开始加载数据源', id)
-    
     const response = await dataSourceStore.fetchDataSourceById(id)
-    dataSource.value = response // 修复：fetchDataSourceById已经返回了处理后的数据
-    console.log('✅ 对象存储浏览: 数据源加载成功', dataSource.value)
-    console.log('🪣 对象存储浏览: 数据源配置', dataSource.value?.config)
-    console.log('🎯 对象存储浏览: 配置中的bucket', dataSource.value?.config?.bucket)
+    dataSource.value = response
   } catch (error) {
-    console.error('❌ 对象存储浏览: 数据源加载失败', error)
+    console.error('对象存储浏览: 数据源加载失败', error)
     ElMessage.error('加载数据源失败')
     
     // 如果API失败，尝试从当前数据源列表中找
-    console.log('🔄 对象存储浏览: 尝试从当前列表中查找数据源')
     const currentList = dataSourceStore.dataSources
-    console.log('📊 对象存储浏览: 当前数据源列表:', currentList)
     
     if (Array.isArray(currentList)) {
       const found = currentList.find(ds => ds.id === id)
       if (found) {
         dataSource.value = found
-        console.log('✅ 对象存储浏览: 从列表中找到数据源', found)
-        console.log('🏷️ 对象存储浏览: 数据源名称', found.cname || found.name)
-        console.log('🪣 对象存储浏览: 数据源配置', found?.config)
-        console.log('🎯 对象存储浏览: 配置中的bucket', found?.config?.bucket)
-      } else {
-        console.log('❌ 对象存储浏览: 在数据源列表中未找到ID为', id, '的数据源')
       }
     } else {
-      console.log('⚠️ 对象存储浏览: 数据源列表不是数组或为空:', currentList)
-      
       // 如果数据源列表还未加载，尝试强制获取
-      console.log('🔄 对象存储浏览: 尝试强制获取数据源列表')
       try {
         await dataSourceStore.fetchDataSources()
         const newList = dataSourceStore.dataSources
@@ -616,13 +577,10 @@ async function loadDataSource() {
           const found = newList.find(ds => ds.id === id)
           if (found) {
             dataSource.value = found
-            console.log('✅ 对象存储浏览: 强制获取后从列表中找到数据源', found)
-            console.log('🪣 对象存储浏览: 数据源配置', found?.config)
-            console.log('🎯 对象存储浏览: 配置中的bucket', found?.config?.bucket)
           }
         }
       } catch (fetchError) {
-        console.error('❌ 对象存储浏览: 强制获取数据源列表也失败:', fetchError)
+        console.error('对象存储浏览: 强制获取数据源列表也失败:', fetchError)
       }
     }
   }
@@ -633,8 +591,6 @@ async function loadBuckets() {
     loading.value = true
     const id = route.params.id as string
     
-    console.log('📂 对象存储浏览: 获取真实存储桶列表')
-    
     const response = await objectStorageApi.listBuckets(id)
     const data = response.data || response
     
@@ -644,13 +600,11 @@ async function loadBuckets() {
         createdDate: bucket.creation_date ? new Date(bucket.creation_date) : new Date(),
         region: bucket.region || 'us-east-1'
       }))
-      console.log(`✅ 对象存储浏览: 成功获取 ${buckets.value.length} 个存储桶`)
     } else {
-      console.warn('⚠️ 对象存储浏览: 响应数据格式不正确', data)
       buckets.value = []
     }
   } catch (error) {
-    console.error('❌ 对象存储浏览: 加载存储桶列表失败', error)
+    console.error('对象存储浏览: 加载存储桶列表失败', error)
     ElMessage.error('加载存储桶列表失败')
     buckets.value = []
   } finally {
@@ -660,7 +614,6 @@ async function loadBuckets() {
 
 async function loadObjects() {
   if (!currentBucket.value) {
-    console.log('📭 对象存储浏览: 未选择存储桶，跳过加载对象')
     objects.value = []
     totalObjects.value = 0
     return
@@ -682,9 +635,6 @@ async function loadObjects() {
       max_keys: pageSize.value
     }
     
-    console.log(`🗂️ 对象存储浏览: 获取存储桶 "${currentBucket.value}" 中的对象`, params)
-    console.log(`🗂️ currentPrefix: "${currentPrefix.value}", 处理后prefix: "${prefix}"`)
-    
     const response = await objectStorageApi.listObjects(id, currentBucket.value, params)
     const data = response.data || response
     
@@ -700,30 +650,16 @@ async function loadObjects() {
       }))
       totalObjects.value = objects.value.length
       
-      const folderCount = objects.value.filter(obj => obj.isFolder).length
-      const fileCount = objects.value.length - folderCount
-      console.log(`✅ 对象存储浏览: 成功获取 ${objects.value.length} 项 (${folderCount} 文件夹, ${fileCount} 文件)`)
-      
-      // 打印对象列表以便调试
-      if (objects.value.length > 0) {
-        console.log('📋 对象详情:', objects.value.slice(0, 3).map(obj => ({
-          key: obj.key,
-          isFolder: obj.isFolder,
-          size: obj.size
-        })))
-      }
-      
       // 更新目录树（如果这是根目录的话）
       if (!currentPrefix.value) {
         await initializeDirectoryTree()
       }
     } else {
-      console.warn('⚠️ 对象存储浏览: 对象响应数据格式不正确', data)
       objects.value = []
       totalObjects.value = 0
     }
   } catch (error) {
-    console.error('❌ 对象存储浏览: 加载对象列表失败', error)
+    console.error('对象存储浏览: 加载对象列表失败', error)
     ElMessage.error('加载对象列表失败')
     objects.value = []
     totalObjects.value = 0
@@ -762,10 +698,9 @@ async function initializeDirectoryTree() {
         })
       
       directoryTree.value = rootFolders
-      console.log('🌲 初始化目录树:', rootFolders)
     }
   } catch (error) {
-    console.error('❌ 初始化目录树失败:', error)
+    console.error('初始化目录树失败:', error)
   }
 }
 
@@ -828,7 +763,6 @@ function getBackButtonTooltip(): string {
 }
 
 async function handleItemClick(object: any, event?: Event) {
-  console.log('📁 主内容区点击:', object)
   
   if (event?.ctrlKey || event?.metaKey) {
     // 多选
@@ -840,8 +774,6 @@ async function handleItemClick(object: any, event?: Event) {
     }
   } else {
     if (object.isFolder) {
-      console.log('📂 点击文件夹，准备进入:', object.key)
-      
       const newPrefix = object.key
       currentPrefix.value = newPrefix
       
@@ -859,11 +791,7 @@ async function handleItemClick(object: any, event?: Event) {
 }
 
 async function handleDoubleClick(object: any) {
-  console.log('🖱️ 主内容区双击:', object)
-  
   if (object.isFolder) {
-    console.log('📂 双击文件夹，准备进入:', object.key)
-    
     const newPrefix = object.key
     currentPrefix.value = newPrefix
     
@@ -971,15 +899,11 @@ function getRowClassName(row: any): string {
 
 // 侧边栏树形导航相关方法
 async function handleTreeNodeClick(data: any) {
-  console.log('🌲 目录树点击:', data)
-  console.log('🌲 当前prefix:', currentPrefix.value)
-  
   // 确保路径以 / 结尾，与MinIO的前缀格式保持一致
   const targetPath = data.path.endsWith('/') ? data.path : data.path + '/'
   const currentPath = currentPrefix.value.endsWith('/') ? currentPrefix.value : currentPrefix.value + '/'
   
   if (targetPath !== currentPath) {
-    console.log('🔄 切换目录:', `"${currentPrefix.value}" -> "${data.path}"`)
     currentPrefix.value = data.path
     
     // 更新URL
@@ -989,8 +913,6 @@ async function handleTreeNodeClick(data: any) {
     
     // 直接刷新主内容区数据
     await loadObjects()
-  } else {
-    console.log('🌲 目录已经是当前目录，跳过切换')
   }
 }
 
@@ -1003,7 +925,7 @@ async function loadTreeNode(node: any, resolve: any) {
       prefix = prefix + '/'
     }
     
-    console.log('🌲 加载目录树节点:', { prefix, bucketName: currentBucket.value })
+
     
     const response = await objectStorageApi.listObjects(id, currentBucket.value, {
       prefix: prefix,
@@ -1030,14 +952,12 @@ async function loadTreeNode(node: any, resolve: any) {
           }
         })
       
-      console.log('🌲 目录树节点数据:', folders)
       resolve(folders)
     } else {
-      console.warn('⚠️ 目录树节点数据格式不正确:', data)
       resolve([])
     }
   } catch (error) {
-    console.error('❌ 加载目录树节点失败:', error)
+    console.error('加载目录树节点失败:', error)
     resolve([])
   }
 }
@@ -1132,8 +1052,6 @@ async function downloadObject(object: any) {
   }
   
   try {
-    console.log(`⬇️ 对象存储浏览: 下载对象 "${object.key}" 从存储桶 "${currentBucket.value}"`)
-    
     const id = route.params.id as string
     const blob = await objectStorageApi.downloadObject(id, currentBucket.value, object.key)
     
