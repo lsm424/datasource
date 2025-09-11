@@ -1,0 +1,145 @@
+# 数据浏览系统 SSO 配置示例
+# 复制此文件为 .env 并根据实际情况修改配置
+
+# ==========================================
+# 基础配置
+# ==========================================
+ENVIRONMENT=development
+HOST=0.0.0.0
+PORT=8000
+
+# 数据库配置
+DATABASE_URL=sqlite:///./data-browser.db
+
+# JWT基础配置 - 用于本系统用户认证
+SECRET_KEY=your-local-secret-key-change-this-in-production-min-32-chars
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# CORS配置
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
+
+# ==========================================
+# SSO 单点登录配置
+# ==========================================
+
+# 启用SSO功能
+ENABLE_SSO=true
+
+# JWT共享密钥配置 - 与外部系统共享的密钥
+# 注意：这个密钥必须与外部系统使用的JWT签名密钥完全一致
+SSO_SHARED_SECRET=your-shared-secret-key-with-external-systems
+
+# API Key配置
+API_KEY_ENABLED=true
+API_KEY_EXPIRY_DAYS=365
+
+# ==========================================
+# OAuth2/OIDC 集成配置
+# ==========================================
+
+# Microsoft Azure AD 配置
+MICROSOFT_CLIENT_ID=your-microsoft-application-client-id
+MICROSOFT_CLIENT_SECRET=your-microsoft-application-client-secret
+MICROSOFT_TENANT_ID=your-microsoft-tenant-id-or-common
+
+# Google OAuth2 配置
+GOOGLE_CLIENT_ID=your-google-oauth2-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-oauth2-client-secret
+
+# ==========================================
+# 外部系统集成配置
+# ==========================================
+
+# 外部系统A - 示例：公司内部OA系统
+EXTERNAL_SYSTEM_A_URL=http://oa.company.com/api/v1/auth/validate
+EXTERNAL_SYSTEM_A_TOKEN=optional-api-key-for-system-a
+
+# 外部系统B - 示例：CRM系统
+EXTERNAL_SYSTEM_B_URL=http://crm.company.com/api/user/verify
+EXTERNAL_SYSTEM_B_TOKEN=optional-api-key-for-system-b
+
+# ==========================================
+# 安全配置
+# ==========================================
+
+# 日志配置
+LOG_LEVEL=INFO
+ACCESS_LOG=true
+
+# 启用调度器进行数据统计
+ENABLE_SCHEDULER=true
+STATS_CRON_HOUR=2
+STATS_CRON_MINUTE=0
+
+# ==========================================
+# 高级SSO配置选项（可选）
+# ==========================================
+
+# 多系统JWT密钥映射（JSON格式）
+# SYSTEM_JWT_SECRETS={"system_a":"secret_a","system_b":"secret_b"}
+
+# 用户角色映射（JSON格式）
+# ROLE_MAPPING={"system_a":{"admin":"admin","user":"user"},"system_b":{"administrator":"admin","member":"user"}}
+
+# SSO用户自动创建配置
+SSO_AUTO_CREATE_USERS=true
+SSO_DEFAULT_USER_ROLE=user
+
+# Token验证超时设置（秒）
+SSO_VALIDATION_TIMEOUT=30
+
+# ==========================================
+# 开发和调试配置
+# ==========================================
+
+# 开发模式配置
+RELOAD=false
+
+# 启用SSO详细调试日志
+# SSO_DEBUG_ENABLED=true
+
+# ==========================================
+# 生产环境额外配置
+# ==========================================
+
+# 生产环境请取消注释并配置以下选项：
+
+# 使用PostgreSQL数据库
+# DATABASE_URL=postgresql://username:password@localhost:5432/databrowser
+
+# 启用Redis缓存
+# REDIS_ENABLED=true
+# REDIS_URL=redis://localhost:6379/0
+
+# 邮件服务配置（用于用户通知）
+# SMTP_HOST=smtp.company.com
+# SMTP_PORT=587
+# SMTP_TLS=true
+# SMTP_USER=noreply@company.com
+# SMTP_PASSWORD=your-smtp-password
+# EMAILS_FROM_EMAIL=noreply@company.com
+
+# ==========================================
+# 配置验证和测试
+# ==========================================
+
+# 使用以下命令测试配置是否正确：
+# 1. 启动数据浏览系统：python main.py
+# 2. 运行SSO演示脚本：python sso_demo.py
+# 3. 访问API文档：http://localhost:8000/api/docs
+# 4. 测试SSO接口：POST /api/v1/sso/test-integration
+
+# ==========================================
+# 重要安全提醒
+# ==========================================
+
+# 🚨 生产环境安全检查清单：
+# □ 更改所有默认密钥为强随机密钥（至少32字符）
+# □ 使用HTTPS协议（配置反向代理如Nginx）
+# □ 定期轮换JWT密钥和API密钥
+# □ 配置适当的CORS策略
+# □ 启用访问日志和监控
+# □ 实施API限流和防护措施
+# □ 定期备份数据库和配置
+# □ 审查和测试所有外部系统集成

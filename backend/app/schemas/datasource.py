@@ -256,6 +256,7 @@ class FileSystemItem(BaseModel):
     modified_at: datetime = Field(..., description="修改时间")
     permissions: Optional[str] = Field(None, description="权限")
     extension: Optional[str] = Field(None, description="扩展名")
+    status: Optional[str] = Field("accessible", description="文件状态（accessible/locked/error）")
 
 
 class DatabaseTable(BaseModel):

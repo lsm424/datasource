@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Enum, Text
+from sqlalchemy import Column, String, Boolean, DateTime, Enum, Text, JSON
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
 import uuid
@@ -36,6 +36,10 @@ class User(Base):
     company = Column(String(100), nullable=True, comment="公司/组织")
     bio = Column(Text, nullable=True, comment="个人简介")
     
+    # SSO相关字段
+    external_id = Column(String(200), nullable=True, unique=True, index=True, comment="外部系统用户ID")
+    extra_metadata = Column(JSON, nullable=True, comment="扩展元数据")
+    
     def __repr__(self):
         return f"<User(id='{self.id}', username='{self.username}', role='{self.role.value}')>"
     
@@ -61,4 +65,6 @@ class User(Base):
             "phone": self.phone,
             "company": self.company,
             "bio": self.bio,
+            "external_id": self.external_id,
+            "extra_metadata": self.extra_metadata,
         }

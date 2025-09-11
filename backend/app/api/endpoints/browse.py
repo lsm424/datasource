@@ -206,15 +206,43 @@ async def list_filesystem_files(
         from datetime import datetime
         
         config = datasource.get_filesystem_config()
-        base_path = config["path"]
-        full_path = os.path.join(base_path, path.lstrip("/"))
+        base_path = os.path.normpath(config["path"])  # 规范化基础路径
+        
+        # 对于网络挂载的路径，尝试使用实际网络路径
+        try:
+            real_path = os.path.realpath(base_path)
+            # 如果是网络路径，使用网络路径进行访问
+            if real_path.startswith('\\\\'):
+                base_path = real_path
+        except Exception:
+            pass  # 如果无法获取实际路径，使用原路径
+        
+        # 处理路径分隔符，支持Windows和Linux
+        if path == "/" or path == "":
+            relative_path = ""
+        else:
+            # 移除前导斜杠，并统一使用系统路径分隔符
+            relative_path = path.lstrip("/").replace("/", os.sep)
+        
+        full_path = os.path.join(base_path, relative_path)
+        full_path = os.path.normpath(full_path)  # 规范化完整路径
         
         # 安全检查，防止路径遍历攻击
-        if not full_path.startswith(base_path):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="非法路径"
-            )
+        # 使用os.path.commonpath来确保路径在基础路径内
+        try:
+            common_path = os.path.commonpath([base_path, full_path])
+            if common_path != base_path:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="非法路径"
+                )
+        except ValueError:
+            # 如果路径不在同一驱动器上，直接比较
+            if not full_path.startswith(base_path):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="非法路径"
+                )
         
         if not os.path.exists(full_path):
             raise HTTPException(
@@ -224,32 +252,57 @@ async def list_filesystem_files(
         
         items = []
         for item_name in os.listdir(full_path):
+            # 跳过Zone.Identifier文件（Windows安全标识文件）
+            if item_name.endswith(':Zone.Identifier'):
+                continue
+                
             item_path = os.path.join(full_path, item_name)
             relative_path = os.path.join(path, item_name).replace("\\", "/")
             
-            stat = os.stat(item_path)
-            is_dir = os.path.isdir(item_path)
-            
-            # 获取文件权限信息
-            permissions = ""
             try:
-                mode = stat.st_mode
-                if mode & 0o400: permissions += "r"  # 读权限
-                if mode & 0o200: permissions += "w"  # 写权限  
-                if mode & 0o100: permissions += "x"  # 执行权限
-            except Exception:
-                permissions = "r"  # 默认只读权限
-            
-            item = FileSystemItem(
-                name=item_name,
-                path=relative_path,
-                type="directory" if is_dir else "file",
-                size=0 if is_dir else stat.st_size,
-                modified_at=datetime.fromtimestamp(stat.st_mtime),
-                permissions=permissions,
-                extension=os.path.splitext(item_name)[1] if not is_dir else None
-            )
-            items.append(item)
+                stat = os.stat(item_path)
+                is_dir = os.path.isdir(item_path)
+                
+                # 获取文件权限信息
+                permissions = ""
+                try:
+                    mode = stat.st_mode
+                    if mode & 0o400: permissions += "r"  # 读权限
+                    if mode & 0o200: permissions += "w"  # 写权限  
+                    if mode & 0o100: permissions += "x"  # 执行权限
+                except Exception:
+                    permissions = "r"  # 默认只读权限
+                
+                item = FileSystemItem(
+                    name=item_name,
+                    path=relative_path,
+                    type="directory" if is_dir else "file",
+                    size=0 if is_dir else stat.st_size,
+                    modified_at=datetime.fromtimestamp(stat.st_mtime),
+                    permissions=permissions,
+                    extension=os.path.splitext(item_name)[1] if not is_dir else None,
+                    status="accessible"
+                )
+                items.append(item)
+                
+            except (OSError, IOError) as e:
+                # 处理文件锁定或其他访问错误
+                if e.winerror == 33:  # Windows文件锁定错误
+                    # 创建基本信息，不包含详细统计
+                    item = FileSystemItem(
+                        name=item_name,
+                        path=relative_path,
+                        type="file",  # 假设是文件
+                        size=0,
+                        modified_at=datetime.now(),
+                        permissions="r",  # 默认只读
+                        extension=os.path.splitext(item_name)[1],
+                        status="locked"
+                    )
+                    items.append(item)
+                else:
+                    # 其他错误，跳过该文件
+                    continue
         
         # 按类型和名称排序（目录在前）
         items.sort(key=lambda x: (x.type == "file", x.name.lower()))
@@ -292,15 +345,42 @@ async def download_file(
         import mimetypes
         
         config = datasource.get_filesystem_config()
-        base_path = config["path"]
-        full_path = os.path.join(base_path, path.lstrip("/"))
+        base_path = os.path.normpath(config["path"])  # 规范化基础路径
         
-        # 安全检查
-        if not full_path.startswith(base_path):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="非法路径"
-            )
+        # 对于网络挂载的路径，尝试使用实际网络路径
+        try:
+            real_path = os.path.realpath(base_path)
+            # 如果是网络路径，使用网络路径进行访问
+            if real_path.startswith('\\\\'):
+                base_path = real_path
+        except Exception:
+            pass  # 如果无法获取实际路径，使用原路径
+        
+        # 处理路径分隔符，支持Windows和Linux
+        if path == "/" or path == "":
+            relative_path = ""
+        else:
+            # 移除前导斜杠，并统一使用系统路径分隔符
+            relative_path = path.lstrip("/").replace("/", os.sep)
+        
+        full_path = os.path.join(base_path, relative_path)
+        full_path = os.path.normpath(full_path)  # 规范化完整路径
+        
+        # 安全检查，防止路径遍历攻击
+        try:
+            common_path = os.path.commonpath([base_path, full_path])
+            if common_path != base_path:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="非法路径"
+                )
+        except ValueError:
+            # 如果路径不在同一驱动器上，直接比较
+            if not full_path.startswith(base_path):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="非法路径"
+                )
         
         if not os.path.exists(full_path) or os.path.isdir(full_path):
             raise HTTPException(

@@ -33,26 +33,75 @@ class DataSizeCalculator:
             if not path or not os.path.exists(path):
                 return 0, 0, 0
             
+            # 对于网络挂载的路径，尝试使用实际网络路径
+            real_path = path
+            try:
+                real_path = os.path.realpath(path)
+                # 如果是网络路径，使用网络路径进行统计
+                if real_path.startswith('\\\\'):
+                    logger.info(f"检测到网络路径，使用网络路径进行统计: {real_path}")
+                    path = real_path
+            except Exception as e:
+                logger.warning(f"无法获取实际路径，使用原路径: {e}")
+            
             total_size = 0
             file_count = 0
+            accessible_file_count = 0
+            locked_file_count = 0
             record_count = 0  # 文件系统暂时用文件数作为记录数
             
             # 遍历目录
             for root, dirs, files in os.walk(path):
                 for file in files:
                     file_path = os.path.join(root, file)
+                    
+                    # 跳过Zone.Identifier文件（Windows安全标识文件）
+                    if file.endswith(':Zone.Identifier'):
+                        continue
+                    
                     try:
+                        # 尝试获取文件信息
                         if os.path.isfile(file_path):
                             file_size = os.path.getsize(file_path)
                             total_size += file_size
                             file_count += 1
+                            accessible_file_count += 1
+                        else:
+                            # 即使os.path.isfile返回False，也可能是文件被锁定
+                            # 尝试直接获取文件大小来判断
+                            try:
+                                file_size = os.path.getsize(file_path)
+                                total_size += file_size
+                                file_count += 1
+                                accessible_file_count += 1
+                            except (OSError, IOError) as e:
+                                if hasattr(e, 'winerror') and e.winerror == 33:
+                                    # Windows文件锁定错误，仍然计入文件数
+                                    file_count += 1
+                                    locked_file_count += 1
+                                    logger.warning(f"文件被锁定，无法获取大小: {file_path}")
+                                else:
+                                    logger.warning(f"无法访问文件 {file_path}: {e}")
+                                continue
                     except (OSError, IOError) as e:
-                        logger.warning(f"无法访问文件 {file_path}: {e}")
+                        # 处理文件锁定错误
+                        if hasattr(e, 'winerror') and e.winerror == 33:
+                            # Windows文件锁定错误，仍然计入文件数
+                            file_count += 1
+                            locked_file_count += 1
+                            logger.warning(f"文件被锁定，无法获取大小: {file_path}")
+                        else:
+                            logger.warning(f"无法访问文件 {file_path}: {e}")
                         continue
             
             record_count = file_count  # 对于文件系统，记录数等于文件数
             
-            logger.info(f"文件系统统计完成: {path}, 大小={total_size}, 文件数={file_count}")
+            logger.info(f"文件系统统计完成: {path}, 总大小={total_size}, 总文件数={file_count}, 可访问文件={accessible_file_count}, 锁定文件={locked_file_count}")
+            
+            # 如果所有文件都被锁定，记录警告
+            if locked_file_count > 0 and accessible_file_count == 0:
+                logger.warning(f"所有文件都被锁定，无法获取大小信息。建议等待文件解锁后重新统计。")
+            
             return total_size, file_count, record_count
             
         except Exception as e:

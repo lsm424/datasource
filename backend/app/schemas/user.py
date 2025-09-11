@@ -63,6 +63,10 @@ class UserInDB(UserBase):
     updated_at: datetime = Field(..., description="更新时间")
     last_login_at: Optional[datetime] = Field(None, description="最后登录时间")
     
+    # SSO相关字段
+    external_id: Optional[str] = Field(None, description="外部系统用户ID")
+    extra_metadata: Optional[dict] = Field(None, description="扩展元数据")
+    
     class Config:
         from_attributes = True
 
@@ -157,6 +161,7 @@ class TokenData(BaseModel):
     user_id: Optional[str] = Field(None, description="用户ID")
     username: Optional[str] = Field(None, description="用户名")
     role: Optional[str] = Field(None, description="用户角色")
+    external_system: Optional[str] = Field(None, description="外部系统名称")
 
 
 class LoginResponse(BaseModel):

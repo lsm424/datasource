@@ -101,6 +101,31 @@ class Settings(BaseSettings):
     EMAILS_FROM_EMAIL: Optional[str] = Field(default=None, env="EMAILS_FROM_EMAIL")
     EMAIL_RESET_TOKEN_EXPIRE_HOURS: int = Field(default=24, env="EMAIL_RESET_TOKEN_EXPIRE_HOURS")
     
+    # SSO单点登录配置
+    ENABLE_SSO: bool = Field(default=False, env="ENABLE_SSO")
+    
+    # OAuth2/OIDC配置
+    MICROSOFT_CLIENT_ID: Optional[str] = Field(default=None, env="MICROSOFT_CLIENT_ID")
+    MICROSOFT_CLIENT_SECRET: Optional[str] = Field(default=None, env="MICROSOFT_CLIENT_SECRET")
+    MICROSOFT_TENANT_ID: Optional[str] = Field(default="common", env="MICROSOFT_TENANT_ID")
+    
+    GOOGLE_CLIENT_ID: Optional[str] = Field(default=None, env="GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET: Optional[str] = Field(default=None, env="GOOGLE_CLIENT_SECRET")
+    
+    # 外部系统集成配置
+    EXTERNAL_SYSTEM_A_URL: Optional[str] = Field(default=None, env="EXTERNAL_SYSTEM_A_URL")
+    EXTERNAL_SYSTEM_A_TOKEN: Optional[str] = Field(default=None, env="EXTERNAL_SYSTEM_A_TOKEN")
+    
+    EXTERNAL_SYSTEM_B_URL: Optional[str] = Field(default=None, env="EXTERNAL_SYSTEM_B_URL")
+    EXTERNAL_SYSTEM_B_TOKEN: Optional[str] = Field(default=None, env="EXTERNAL_SYSTEM_B_TOKEN")
+    
+    # JWT共享密钥（与外部系统共享）
+    SSO_SHARED_SECRET: Optional[str] = Field(default=None, env="SSO_SHARED_SECRET")
+    
+    # API Key配置
+    API_KEY_ENABLED: bool = Field(default=True, env="API_KEY_ENABLED")
+    API_KEY_EXPIRY_DAYS: int = Field(default=365, env="API_KEY_EXPIRY_DAYS")
+    
     # 开发配置
     RELOAD: bool = Field(default=False, env="RELOAD")
     
