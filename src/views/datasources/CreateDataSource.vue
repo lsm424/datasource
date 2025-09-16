@@ -664,14 +664,11 @@ const createDataSource = async () => {
       config
     }
     
-    console.log('🚀 CreateDataSource: 准备创建数据源', createForm)
     await dataSourceStore.createDataSource(createForm)
     ElMessage.success('数据源创建成功')
     
     // 创建成功后刷新列表，确保新数据源显示
-    console.log('🔄 CreateDataSource: 创建成功，准备刷新列表')
     await dataSourceStore.fetchDataSources()
-    console.log('✅ CreateDataSource: 列表已刷新，跳转到列表页面')
     
     router.push('/datasources')
   } catch (error: any) {

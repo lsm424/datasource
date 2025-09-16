@@ -181,7 +181,6 @@ const sidebarWidth = computed(() => {
 const availableDataSources = computed(() => {
   // 安全检查：确保dataSources是数组
   if (!dataSourceStore.dataSources || !Array.isArray(dataSourceStore.dataSources)) {
-    console.warn('⚠️ MainLayout: dataSources不是数组', dataSourceStore.dataSources)
     return []
   }
   return dataSourceStore.dataSources.filter(ds => ds && ds.is_active)
@@ -241,15 +240,11 @@ onMounted(async () => {
   
   // 等待认证状态初始化完成后再获取数据源列表
   if (authStore.isAuthenticated) {
-    console.log('🔄 MainLayout: 用户已认证，开始获取数据源列表')
     try {
       await dataSourceStore.fetchDataSources()
-      console.log('✅ MainLayout: 数据源列表获取成功')
     } catch (error) {
       console.error('❌ MainLayout: 获取数据源列表失败:', error)
     }
-  } else {
-    console.log('⚠️ MainLayout: 用户未认证，跳过数据源列表获取')
   }
 })
 

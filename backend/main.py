@@ -42,13 +42,24 @@ def create_application() -> FastAPI:
     )
     
     # 设置CORS中间件
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.ALLOWED_ORIGINS,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # 开发环境：允许所有来源
+    if settings.ENVIRONMENT == "development":
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],  # 允许所有来源
+            allow_credentials=True,  # 允许携带凭证（包括Authorization头）
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        # 生产环境：使用配置的允许列表
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.ALLOWED_ORIGINS,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     
     # 设置自定义中间件
     setup_middleware(app)

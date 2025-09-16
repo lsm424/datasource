@@ -5,6 +5,20 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
+// 自定义插件：禁用Vite的轮询重启机制
+const disablePollingPlugin = () => {
+  return {
+    name: 'disable-polling',
+    configureServer(server) {
+      // 只禁用WebSocket，保留watcher供其他插件使用
+      if (server.ws) {
+        server.ws.close()
+        server.ws = null
+      }
+    }
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
@@ -17,6 +31,8 @@ export default defineConfig({
     Components({
       resolvers: [ElementPlusResolver()],
     }),
+    // 添加自定义插件
+    disablePollingPlugin(),
   ],
   resolve: {
     alias: {
@@ -26,18 +42,24 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // 完全禁用HMR功能
+    hmr: false,
+    // 禁用文件变化时的自动刷新
+    watch: {
+      usePolling: false,
+      ignored: ['**/node_modules/**', '**/.git/**']
+    },
+    // 增加超时时间
+    timeout: 30000,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '/api/v1'),
+        // 增加代理超时时间
+        timeout: 30000,
         configure: (proxy, options) => {
-          proxy.on('error', (err, req, res) => {
-            console.log('代理错误:', err);
-          });
-          proxy.on('proxyReq', (proxyReq, req, res) => {
-            console.log('代理请求:', req.method, req.url, '→', proxyReq.getHeader('host') + proxyReq.path);
-          });
+          console.log('🔄 Vite代理配置:', options)
         }
       },
     },

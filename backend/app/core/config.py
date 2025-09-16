@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     
     # 跨域配置
     ALLOWED_ORIGINS: Union[str, List[str]] = Field(
-        default=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+        default=["*"],  # 默认允许所有来源
         env="ALLOWED_ORIGINS"
     )
     

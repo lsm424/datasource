@@ -32,14 +32,15 @@ const initApp = async () => {
   
   // 设置定期检查token有效性
   setInterval(() => {
-    if (authStore.isAuthenticated && authStore.isTokenExpired()) {
-      console.log('⏰ 定时检查：Token已过期，清除认证状态')
+    // 只在网络连接正常时检查token
+    if (navigator.onLine && authStore.isAuthenticated && authStore.isTokenExpired()) {
       authStore.clearAuth()
       if (router.currentRoute.value.path !== '/login') {
         router.push('/login')
       }
     }
-  }, 5 * 60 * 1000) // 每5分钟检查一次
+  }, 20 * 60 * 1000) // 每20分钟检查一次
+  
   
   app.mount('#app')
 }

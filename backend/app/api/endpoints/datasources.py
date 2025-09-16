@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_active_user, get_current_admin_user
 from app.models.user import User
 from app.models.datasource import DataSource, DataSourceType
+from app.models.data_stats import DataSourceStats as DataSourceStatsModel
 from app.schemas.datasource import (
     DataSourceCreate,
     DataSourceUpdate,
@@ -59,8 +60,25 @@ async def get_datasources(
     # 分页和排序
     datasources = query.order_by(DataSource.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
     
-    # 转换为响应模型
-    datasource_list = [DataSourcePublic.model_validate(ds) for ds in datasources]
+    # 转换为响应模型并添加统计信息
+    datasource_list = []
+    for ds in datasources:
+        ds_data = DataSourcePublic.model_validate(ds)
+        
+        # 获取最新的统计信息
+        latest_stats = db.query(DataSourceStatsModel).filter(
+            DataSourceStatsModel.datasource_id == ds.id
+        ).order_by(DataSourceStatsModel.stats_date.desc()).first()
+        
+        if latest_stats:
+            # 使用统计表中的数据
+            ds_data.num = latest_stats.record_count
+            ds_data.size = latest_stats.data_size
+        else:
+            # 如果没有统计信息，保持原有值（通常为0）
+            pass
+            
+        datasource_list.append(ds_data)
     
     return ListResponse.create(
         data=datasource_list,

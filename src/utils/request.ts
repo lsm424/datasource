@@ -14,7 +14,7 @@ const getAuthStore = async () => {
 
 // 创建axios实例
 const request = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
+  baseURL: '/api',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -34,10 +34,10 @@ request.interceptors.request.use(
       }
     }
     
+    
     return config
   },
   (error) => {
-    console.error('Request interceptor error:', error)
     return Promise.reject(error)
   }
 )
@@ -46,6 +46,7 @@ request.interceptors.request.use(
 request.interceptors.response.use(
   (response: AxiosResponse) => {
     const { data } = response
+    
     
     // 如果是直接下载文件等场景，直接返回
     if (response.config.responseType === 'blob' || response.config.responseType === 'arraybuffer') {
@@ -61,33 +62,41 @@ request.interceptors.response.use(
     
     // 如果响应有包装格式 {code, message, data}，返回内部的data
     // 否则直接返回原数据
-    return data.data !== undefined ? data.data : data
+    // 特殊处理分页响应，保留分页信息
+    if (data.data !== undefined) {
+      // 检查是否是分页响应（包含total, page, limit等字段）
+      if (data.total !== undefined && data.page !== undefined && data.limit !== undefined) {
+        return data // 返回完整的分页响应对象
+      }
+      return data.data // 返回普通响应的data字段
+    }
+    return data
   },
   async (error) => {
-    console.error('Response interceptor error:', error)
     
     if (error.response) {
       const { status, data } = error.response
       
       switch (status) {
         case 401:
-          // 未认证，清除所有认证状态并跳转到登录页
-          console.log('🚫 检测到401错误，清除认证状态')
-          localStorage.removeItem('auth_token')
-          
-          // 清除Pinia认证状态
-          try {
-            const store = await getAuthStore()
-            store.clearAuth()
-            console.log('✅ 已清除Pinia认证状态')
-          } catch (err) {
-            console.warn('⚠️ 清除Pinia状态失败:', err)
-          }
-          
-          // 避免重复跳转到登录页
-          if (router.currentRoute.value.path !== '/login') {
-            router.push('/login')
-            ElMessage.error('登录已过期，请重新登录')
+          // 检查是否在网络连接正常的情况下才处理401
+          if (navigator.onLine) {
+            // 未认证，清除所有认证状态并跳转到登录页
+            localStorage.removeItem('auth_token')
+            
+            // 清除Pinia认证状态
+            try {
+              const store = await getAuthStore()
+              store.clearAuth()
+            } catch (err) {
+              console.warn('清除Pinia状态失败:', err)
+            }
+            
+            // 避免重复跳转到登录页
+            if (router.currentRoute.value.path !== '/login') {
+              router.push('/login')
+              ElMessage.error('登录已过期，请重新登录')
+            }
           }
           break
         case 403:

@@ -36,8 +36,6 @@ import { useAuthStore } from '@/stores/auth'
 const authStore = useAuthStore()
 
 onMounted(() => {
-  console.log('📊 简化版Dashboard加载完成')
-  console.log('👤 当前用户信息:', authStore.currentUser)
   document.title = '仪表盘 - 数据浏览系统'
 })
 </script>

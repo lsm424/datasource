@@ -715,9 +715,7 @@ async function testConnection() {
       config: form.config
     }
     
-    console.log('🔧 EditDataSource: 开始测试连接', testData)
     const result = await dataSourceStore.testConnection(testData)
-    console.log('✅ EditDataSource: 测试连接结果', result)
     
     testResult.value = result
     showTestResult.value = true

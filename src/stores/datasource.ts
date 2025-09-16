@@ -34,23 +34,21 @@ export const useDataSourceStore = defineStore('datasource', () => {
   })
 
   // 获取数据源列表
-  const fetchDataSources = async () => {
+  const fetchDataSources = async (params?: { page?: number; limit?: number; type?: string; is_active?: boolean; search?: string }) => {
     isLoading.value = true
     try {
-      const response = await dataSourceApi.getDataSources()
+      const response = await dataSourceApi.getDataSources(params)
 
       
-      // 处理分页响应结构：response可能是数组（已处理）或分页对象（未处理）
+      // 处理分页响应结构
       let dataArray: any[] = []
       
       if (Array.isArray(response)) {
-        // 响应拦截器已经处理，直接是数组
+        // 响应拦截器已经处理，直接是数组（非分页响应）
         dataArray = response
-
       } else if (response && response.data && Array.isArray(response.data)) {
         // 响应是分页对象，提取data字段
         dataArray = response.data
-
       } else {
         console.warn('⚠️ DataSource Store: 响应数据格式异常', response)
         dataArray = []

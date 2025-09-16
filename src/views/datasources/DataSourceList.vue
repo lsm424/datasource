@@ -222,7 +222,7 @@
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50, 100]"
-          :total="filteredDataSources.length"
+          :total="totalCount"
           layout="total, sizes, prev, pager, next, jumper"
           @size-change="handlePageSizeChange"
           @current-change="handleCurrentPageChange"
@@ -265,70 +265,38 @@ const pageSize = ref(20)
 const sortField = ref('')
 const sortOrder = ref('')
 const testingConnections = ref<Record<string, boolean>>({})
+const totalCount = ref(0)
 
-// 计算属性
+// 计算属性 - 直接使用store中的数据，因为后端已经处理了分页和过滤
 const filteredDataSources = computed(() => {
-  // 首先过滤掉 undefined 和 null 项
-  let result = dataSourceStore.dataSources.filter(ds => ds != null).slice()
-  
-  // 搜索过滤
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    result = result.filter(ds => 
-      ds && ( // 额外的安全检查
-        ds.name?.toLowerCase().includes(query) ||
-        ds.cname?.toLowerCase().includes(query) ||
-        ds.company?.toLowerCase().includes(query) ||
-        ds.desc?.toLowerCase().includes(query)
-      )
-    )
-  }
-  
-  // 类型过滤
-  if (filterType.value) {
-    result = result.filter(ds => ds && ds.type === filterType.value)
-  }
-  
-  // 状态过滤
-  if (filterStatus.value !== '') {
-    result = result.filter(ds => ds && ds.is_active === filterStatus.value)
-  }
-  
-  // 排序
-  if (sortField.value) {
-    result.sort((a, b) => {
-      const aVal = a[sortField.value as keyof DataSource]
-      const bVal = b[sortField.value as keyof DataSource]
-      
-      // 处理 undefined 值
-      if (aVal === undefined && bVal === undefined) return 0
-      if (aVal === undefined) return 1
-      if (bVal === undefined) return -1
-      
-      if (sortOrder.value === 'descending') {
-        return aVal > bVal ? -1 : 1
-      } else {
-        return aVal > bVal ? 1 : -1
-      }
-    })
-  }
-  
-  return result
+  return dataSourceStore.dataSources.filter(ds => ds != null)
 })
 
 const paginatedDataSources = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return filteredDataSources.value.slice(start, end)
+  return filteredDataSources.value
 })
 
 // 方法
 const refreshList = async () => {
   try {
-    console.log('🔄 DataSourceList: 开始刷新数据源列表')
-    await dataSourceStore.fetchDataSources()
-    console.log('✅ DataSourceList: 数据源列表刷新完成，当前有', dataSourceStore.dataSources.length, '个数据源')
-    console.log('📋 DataSourceList: 数据源详情', dataSourceStore.dataSources)
+    
+    const params = {
+      page: currentPage.value,
+      limit: pageSize.value,
+      type: filterType.value || undefined,
+      is_active: filterStatus.value !== '' ? filterStatus.value : undefined,
+      search: searchQuery.value || undefined
+    }
+    
+    const response = await dataSourceStore.fetchDataSources(params)
+    
+    // 提取分页信息
+    if (response && typeof response === 'object') {
+      if ('total' in response) {
+        totalCount.value = response.total
+      }
+    }
+    
   } catch (error) {
     console.error('❌ DataSourceList: 刷新数据源列表失败', error)
     ElMessage.error('刷新数据源列表失败')
@@ -337,10 +305,12 @@ const refreshList = async () => {
 
 const handleSearch = () => {
   currentPage.value = 1
+  refreshList()
 }
 
 const handleFilter = () => {
   currentPage.value = 1
+  refreshList()
 }
 
 const handleSort = ({ prop, order }: { prop: string; order: string }) => {
@@ -351,10 +321,12 @@ const handleSort = ({ prop, order }: { prop: string; order: string }) => {
 const handlePageSizeChange = (size: number) => {
   pageSize.value = size
   currentPage.value = 1
+  refreshList()
 }
 
 const handleCurrentPageChange = (page: number) => {
   currentPage.value = page
+  refreshList()
 }
 
 const browseDataSource = (datasource: DataSource) => {

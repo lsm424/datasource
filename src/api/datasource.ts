@@ -18,7 +18,7 @@ import type {
 export const dataSourceApi = {
   // 获取数据源列表
   getDataSources: (params?: DataSourceListQuery): Promise<PaginatedResponse<DataSource>> => {
-    return get<PaginatedResponse<DataSource>>('/datasources', { params })
+    return get<PaginatedResponse<DataSource>>('/datasources/', { params })
   },
 
   // 根据ID获取数据源详情
@@ -28,7 +28,7 @@ export const dataSourceApi = {
 
   // 创建数据源
   createDataSource: (data: CreateDataSourceForm): Promise<ApiResponse<DataSource>> => {
-    return post<ApiResponse<DataSource>>('/datasources', data)
+    return post<ApiResponse<DataSource>>('/datasources/', data)
   },
 
   // 更新数据源
@@ -55,9 +55,14 @@ export const dataSourceApi = {
 // 文件系统浏览相关API
 export const filesystemApi = {
   // 获取文件/目录列表
-  listFiles: (dataSourceId: string, path = '/'): Promise<ApiResponse<FileSystemItem[]>> => {
+  listFiles: (
+    dataSourceId: string, 
+    path = '/', 
+    page = 1, 
+    limit = 100
+  ): Promise<ApiResponse<FileSystemItem[]>> => {
     return get<ApiResponse<FileSystemItem[]>>(`/browse/filesystem/${dataSourceId}/list`, {
-      params: { path }
+      params: { path, page, limit }
     })
   },
 

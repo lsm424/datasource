@@ -116,41 +116,26 @@ const loginRules: FormRules = {
 
 // 处理登录
 const handleLogin = async () => {
-  console.log('🔐 开始登录流程...')
   if (!loginFormRef.value) return
   
   await loginFormRef.value.validate(async (valid) => {
     if (valid) {
       try {
-        console.log('📝 表单验证通过，准备调用登录API...')
-        console.log('📤 登录数据:', { ...loginForm, password: '***' })
-        
         const result = await authStore.login(loginForm)
-        console.log('✅ 登录API调用成功:', result)
         
         ElMessage.success('登录成功')
         
         // 等待一个微任务周期确保认证状态已更新
         await nextTick()
         
-        console.log('🔍 当前认证状态:', {
-          isAuthenticated: authStore.isAuthenticated,
-          user: authStore.user,
-          token: authStore.token ? '存在' : '不存在'
-        })
-        
         // 重定向到之前访问的页面或首页
         const redirectPath = router.currentRoute.value.query.redirect as string || '/dashboard'
-        console.log('🚀 准备跳转到:', redirectPath)
         
         await router.push(redirectPath)
-        console.log('✅ 路由跳转完成')
       } catch (error: any) {
-        console.error('❌ Login error:', error)
+        console.error('登录错误:', error)
         ElMessage.error(error.message || '登录失败，请检查用户名和密码')
       }
-    } else {
-      console.log('❌ 表单验证失败')
     }
   })
 }

@@ -186,6 +186,17 @@
               </el-button>
             </div>
           </div>
+          
+          <!-- 性能提示 -->
+          <div class="performance-tip" v-if="totalObjects > 100">
+            <el-alert
+              :title="`此目录包含 ${totalObjects} 个对象，建议使用分页浏览以提高性能`"
+              type="info"
+              :closable="false"
+              show-icon
+              class="performance-alert"
+            />
+          </div>
 
           <!-- 对象列表 -->
           <div class="object-list" v-loading="loading">
@@ -309,13 +320,26 @@
               </div>
             </div>
 
-            <!-- 空状态 -->
-            <div v-if="!loading && filteredObjects.length === 0" class="empty-state">
-              <el-empty description="此目录为空" />
-            </div>
+          <!-- 空状态 -->
+          <div v-if="!loading && filteredObjects.length === 0" class="empty-state">
+            <el-empty description="此目录为空" />
           </div>
         </div>
+        
+        <!-- 分页组件 -->
+        <div class="pagination-container" v-if="totalObjects > pageSize">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :page-sizes="[20, 50, 100, 200, 500]"
+            :total="totalObjects"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleSizeChange"
+            @current-change="handleCurrentChange"
+          />
+        </div>
       </div>
+    </div>
     </div>
 
     <!-- 预览对话框 -->
@@ -434,7 +458,7 @@ const searchQuery = ref('')
 const viewMode = ref('list')
 const selectedObjects = ref([])
 const currentPage = ref(1)
-const pageSize = ref(100)
+const pageSize = ref(50)
 const totalObjects = ref(0)
 
 // 新增文件系统风格的数据
@@ -525,6 +549,39 @@ onMounted(async () => {
 })
 
 // 监听路由变化
+watch(() => route.params.id, async (newId) => {
+  if (newId) {
+    await loadDataSource()
+    
+    const bucket = route.query.bucket as string
+    const prefix = route.query.prefix as string
+    const configuredBucket = dataSource.value?.config?.bucket
+    
+    // 优先使用URL查询参数中的bucket
+    if (bucket) {
+      currentBucket.value = bucket
+      currentPrefix.value = prefix || ''
+      await loadObjects()
+    } 
+    // 如果URL中没有bucket，检查数据源配置中是否指定了bucket
+    else if (configuredBucket) {
+      currentBucket.value = configuredBucket
+      currentPrefix.value = ''
+      // 更新URL以反映当前状态
+      router.push({
+        query: { ...route.query, bucket: currentBucket.value }
+      })
+      await loadObjects()
+    } 
+    // 如果既没有URL参数也没有配置中的bucket，显示所有buckets
+    else {
+      currentBucket.value = ''
+      currentPrefix.value = ''
+      await loadBuckets()
+    }
+  }
+})
+
 watch(() => route.query, async (newQuery) => {
   const bucket = newQuery.bucket as string
   const prefix = newQuery.prefix as string
@@ -1533,6 +1590,30 @@ function handleUploadError(error: any, file: any) {
   justify-content: center;
   align-items: center;
   height: 200px;
+}
+
+/* 性能提示样式 */
+.performance-tip {
+  padding: 8px 16px;
+  background: #f0f9ff;
+  border-bottom: 1px solid #e1f5fe;
+}
+
+.performance-alert {
+  margin: 0;
+}
+
+.performance-alert .el-alert__content {
+  font-size: 13px;
+}
+
+/* 分页组件样式 */
+.pagination-container {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  border-top: 1px solid #ebeef5;
+  background: #fff;
 }
 
 .etag {

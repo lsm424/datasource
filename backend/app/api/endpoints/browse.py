@@ -183,6 +183,8 @@ def get_mysql_table_data(connection, table_name, page=1, limit=20, where=None):
 async def list_filesystem_files(
     datasource_id: str,
     path: str = Query("/", description="文件路径"),
+    page: int = Query(1, ge=1, description="页码"),
+    limit: int = Query(100, ge=1, le=1000, description="每页数量"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Any:
@@ -250,7 +252,8 @@ async def list_filesystem_files(
                 detail="路径不存在"
             )
         
-        items = []
+        # 获取所有文件列表
+        all_items = []
         for item_name in os.listdir(full_path):
             # 跳过Zone.Identifier文件（Windows安全标识文件）
             if item_name.endswith(':Zone.Identifier'):
@@ -283,7 +286,7 @@ async def list_filesystem_files(
                     extension=os.path.splitext(item_name)[1] if not is_dir else None,
                     status="accessible"
                 )
-                items.append(item)
+                all_items.append(item)
                 
             except (OSError, IOError) as e:
                 # 处理文件锁定或其他访问错误
@@ -299,17 +302,26 @@ async def list_filesystem_files(
                         extension=os.path.splitext(item_name)[1],
                         status="locked"
                     )
-                    items.append(item)
+                    all_items.append(item)
                 else:
                     # 其他错误，跳过该文件
                     continue
         
         # 按类型和名称排序（目录在前）
-        items.sort(key=lambda x: (x.type == "file", x.name.lower()))
+        all_items.sort(key=lambda x: (x.type == "file", x.name.lower()))
+        
+        # 计算分页
+        total_items = len(all_items)
+        start_index = (page - 1) * limit
+        end_index = start_index + limit
+        paginated_items = all_items[start_index:end_index]
         
         return DataResponse(
-            data=items,
-            message="获取文件列表成功"
+            data=paginated_items,
+            message=f"获取文件列表成功，共找到 {total_items} 个项目，当前页显示 {len(paginated_items)} 个",
+            total=total_items,
+            page=page,
+            limit=limit
         )
         
     except Exception as e:

@@ -126,6 +126,17 @@
             </span>
           </div>
         </div>
+        
+        <!-- 性能提示 -->
+        <div class="performance-tip" v-if="totalFiles > 100">
+          <el-alert
+            :title="`此目录包含 ${totalFiles} 个文件，建议使用分页浏览以提高性能`"
+            type="info"
+            :closable="false"
+            show-icon
+            class="performance-alert"
+          />
+        </div>
 
         <!-- 文件列表 -->
         <div class="file-list" v-loading="loading">
@@ -250,6 +261,19 @@
             <el-empty description="此目录为空" />
           </div>
         </div>
+        
+        <!-- 分页组件 -->
+        <div class="pagination-container" v-if="totalFiles > pageSize">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :page-sizes="[20, 50, 100, 200, 500]"
+            :total="totalFiles"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleSizeChange"
+            @current-change="handlePageChange"
+          />
+        </div>
       </div>
     </div>
 
@@ -335,6 +359,11 @@ const selectedFiles = ref([])
 const directoryTree = ref([])
 const favorites = ref([])
 
+// 分页相关
+const currentPage = ref(1)
+const pageSize = ref(50)
+const totalFiles = ref(0)
+
 // 预览相关
 const showPreviewDialog = ref(false)
 const currentPreviewFile = ref({})
@@ -367,11 +396,21 @@ const isInFavorites = computed(() => {
 // 生命周期
 onMounted(async () => {
   await loadDataSource()
+  await loadDirectoryTree()
   await loadFiles()
   loadFavorites()
 })
 
 // 监听路由变化
+watch(() => route.params.id, async (newId) => {
+  if (newId) {
+    await loadDataSource()
+    await loadDirectoryTree()
+    currentPath.value = ''
+    await loadFiles()
+  }
+})
+
 watch(() => route.query.path, (newPath) => {
   currentPath.value = (newPath as string) || ''
   loadFiles()
@@ -381,37 +420,22 @@ watch(() => route.query.path, (newPath) => {
 async function loadDataSource() {
   try {
     const id = route.params.id as string
-    console.log('🔍 文件系统浏览: 开始加载数据源', id)
-    
     const response = await dataSourceStore.fetchDataSourceById(id)
-    console.log('📨 文件系统浏览: API响应', response)
-    
     dataSource.value = response.data
-    console.log('✅ 文件系统浏览: 数据源加载成功', dataSource.value)
-    console.log('🏷️ 文件系统浏览: 数据源名称', dataSource.value?.cname || dataSource.value?.name)
   } catch (error) {
-    console.error('❌ 文件系统浏览: 数据源加载失败', error)
     ElMessage.error('加载数据源失败')
     
     // 如果API失败，尝试从当前数据源列表中找
-    console.log('🔄 文件系统浏览: 尝试从当前列表中查找数据源')
     const currentList = dataSourceStore.dataSources
-    console.log('📊 文件系统浏览: 当前数据源列表:', currentList)
+    const id = route.params.id as string
     
     if (Array.isArray(currentList)) {
       const found = currentList.find(ds => ds.id === id)
       if (found) {
         dataSource.value = found
-        console.log('✅ 文件系统浏览: 从列表中找到数据源', found)
-        console.log('🏷️ 文件系统浏览: 数据源名称', found.cname || found.name)
-      } else {
-        console.log('❌ 文件系统浏览: 在数据源列表中未找到ID为', id, '的数据源')
       }
     } else {
-      console.log('⚠️ 文件系统浏览: 数据源列表不是数组或为空:', currentList)
-      
-      // 如果数据源列表还未加载，尝试强制获取
-      console.log('🔄 文件系统浏览: 尝试强制获取数据源列表')
+      // 如枟数据源列表还未加载，尝试强制获取
       try {
         await dataSourceStore.fetchDataSources()
         const newList = dataSourceStore.dataSources
@@ -419,13 +443,43 @@ async function loadDataSource() {
           const found = newList.find(ds => ds.id === id)
           if (found) {
             dataSource.value = found
-            console.log('✅ 文件系统浏览: 强制获取后从列表中找到数据源', found)
           }
         }
       } catch (fetchError) {
-        console.error('❌ 文件系统浏览: 强制获取数据源列表也失败:', fetchError)
+        console.error('获取数据源列表失败:', fetchError)
       }
     }
+  }
+}
+
+async function loadDirectoryTree() {
+  try {
+    const id = route.params.id as string
+    const response = await filesystemApi.listFiles(id, '/')
+    
+    // 确保正确提取文件数组数据
+    let fileData = []
+    if (Array.isArray(response)) {
+      fileData = response
+    } else if (response && Array.isArray(response.data)) {
+      fileData = response.data
+    } else {
+      return
+    }
+    
+    // 构建目录树结构
+    directoryTree.value = fileData
+      .filter(item => item.type === 'directory')
+      .map(item => ({
+        name: item.name,
+        path: item.path,
+        type: 'directory',
+        isLeaf: false,
+        children: []
+      }))
+  } catch (error) {
+    console.error('❌ 目录树加载失败:', error)
+    directoryTree.value = []
   }
 }
 
@@ -433,7 +487,7 @@ async function loadFiles() {
   try {
     loading.value = true
     const id = route.params.id as string
-    const response = await filesystemApi.listFiles(id, currentPath.value || '/')
+    const response = await filesystemApi.listFiles(id, currentPath.value || '/', currentPage.value, pageSize.value)
     
     // 确保正确提取文件数组数据
     let fileData = []
@@ -443,13 +497,21 @@ async function loadFiles() {
     } else if (response && Array.isArray(response.data)) {
       // 响应是包装对象，提取data字段
       fileData = response.data
+      // 提取分页信息
+      if (response.total !== undefined) {
+        totalFiles.value = response.total
+      }
+      if (response.page !== undefined) {
+        currentPage.value = response.page
+      }
+      if (response.limit !== undefined) {
+        pageSize.value = response.limit
+      }
     } else {
       console.warn('⚠️ 文件系统浏览: 响应数据格式异常', response)
     }
     
     files.value = fileData
-    console.log('📁 文件系统浏览: 加载文件列表成功', files.value)
-    console.log('📁 文件系统浏览: 文件数量', fileData.length)
   } catch (error) {
     console.error('❌ 文件系统浏览: 加载文件列表失败', error)
     ElMessage.error('加载文件列表失败')
@@ -471,6 +533,9 @@ async function loadTreeNode(node: any, resolve: Function) {
       fileData = response
     } else if (response && Array.isArray(response.data)) {
       fileData = response.data
+    } else {
+      resolve([])
+      return
     }
     
     const nodes = fileData
@@ -482,7 +547,7 @@ async function loadTreeNode(node: any, resolve: Function) {
     
     resolve(nodes)
   } catch (error) {
-    console.error('❌ 文件系统浏览: 加载树节点失败', error)
+    console.error('加载树节点失败:', error)
     resolve([])
   }
 }
@@ -539,6 +604,18 @@ function handleSearch() {
 
 async function refreshData() {
   await loadFiles()
+}
+
+// 分页处理函数
+function handlePageChange(page: number) {
+  currentPage.value = page
+  loadFiles()
+}
+
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1  // 重置到第一页
+  loadFiles()
 }
 
 function getFileIcon(file: any) {
@@ -974,6 +1051,30 @@ function saveFavorites() {
   justify-content: center;
   align-items: center;
   height: 200px;
+}
+
+/* 性能提示样式 */
+.performance-tip {
+  padding: 8px 16px;
+  background: #f0f9ff;
+  border-bottom: 1px solid #e1f5fe;
+}
+
+.performance-alert {
+  margin: 0;
+}
+
+.performance-alert .el-alert__content {
+  font-size: 13px;
+}
+
+/* 分页组件样式 */
+.pagination-container {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  border-top: 1px solid #ebeef5;
+  background: #fff;
 }
 
 /* 文件图标颜色 */
