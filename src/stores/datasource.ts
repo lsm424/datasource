@@ -171,6 +171,26 @@ export const useDataSourceStore = defineStore('datasource', () => {
     }
   }
 
+  // 运行单个数据源统计
+  const runDataSourceStats = async (id: string) => {
+    try {
+      const response = await dataSourceApi.runDataSourceStats(id)
+      return response
+    } catch (error) {
+      throw error
+    }
+  }
+
+  // 获取单个数据源统计历史
+  const getDataSourceStats = async (id: string, limit = 10) => {
+    try {
+      const response = await dataSourceApi.getDataSourceStats(id, limit)
+      return response
+    } catch (error) {
+      throw error
+    }
+  }
+
   // 清除当前数据源
   const clearCurrentDataSource = () => {
     currentDataSource.value = null
@@ -198,6 +218,8 @@ export const useDataSourceStore = defineStore('datasource', () => {
     updateDataSource,
     deleteDataSource,
     testConnection,
+    runDataSourceStats,
+    getDataSourceStats,
     clearCurrentDataSource
   }
 })

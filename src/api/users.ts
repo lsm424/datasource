@@ -35,7 +35,7 @@ export interface UserStats {
 export const userApi = {
   // 获取用户列表
   getUsers: (query?: UserListQuery): Promise<ListResponse<User>> => {
-    return get<ListResponse<User>>('/users', { params: query })
+    return get<ListResponse<User>>('/users/', { params: query })
   },
 
   // 获取用户统计信息
@@ -74,7 +74,7 @@ export const userApi = {
 
   // 创建用户（管理员）
   createUser: (data: CreateUserForm): Promise<ApiResponse<User>> => {
-    return post<ApiResponse<User>>('/users', data)
+    return post<ApiResponse<User>>('/users/', data)
   },
 
   // 更新用户（管理员）

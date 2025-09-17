@@ -345,41 +345,132 @@
     <!-- 预览对话框 -->
     <el-dialog
       v-model="showPreviewDialog"
-      :title="currentPreviewObject.key"
+      :title="`预览: ${currentPreviewObject.key ? getDisplayName(currentPreviewObject) : '文件预览'}`"
       width="80%"
       :close-on-click-modal="false"
+      destroy-on-close
     >
       <div class="object-preview">
         <!-- 图片预览 -->
         <div v-if="previewType === 'image'" class="image-preview">
-          <img :src="previewUrl" :alt="currentPreviewObject.key" />
+          <img 
+            :src="previewUrl" 
+            :alt="currentPreviewObject.key || '图片预览'" 
+            @load="handleImageLoad"
+            @error="handlePreviewError"
+          />
+        </div>
+        
+        <!-- 视频预览 -->
+        <div v-else-if="previewType === 'video'" class="video-preview">
+          <video 
+            :src="previewUrl"
+            controls
+            preload="metadata"
+            @error="handlePreviewError"
+            style="width: 100%; max-height: 600px;"
+          >
+            您的浏览器不支持视频播放
+          </video>
+        </div>
+        
+        <!-- 音频预览 -->
+        <div v-else-if="previewType === 'audio'" class="audio-preview">
+          <div class="audio-container">
+            <div class="audio-info">
+              <el-icon size="48"><VideoPlay /></el-icon>
+              <div class="audio-name">{{ currentPreviewObject.key ? getDisplayName(currentPreviewObject) : '音频文件' }}</div>
+              <div class="audio-size">{{ formatFileSize(currentPreviewObject.size || 0) }}</div>
+            </div>
+            <audio 
+              :src="previewUrl"
+              controls
+              preload="metadata"
+              @error="handlePreviewError"
+              style="width: 100%; margin-top: 20px;"
+            >
+              您的浏览器不支持音频播放
+            </audio>
+          </div>
         </div>
         
         <!-- 文本预览 -->
         <div v-else-if="previewType === 'text'" class="text-preview">
-          <pre>{{ previewContent }}</pre>
+          <div class="text-toolbar">
+            <el-tag size="small" type="info">{{ currentPreviewObject.key ? getFileType(currentPreviewObject) : '文本文件' }}</el-tag>
+            <el-tag size="small">{{ formatFileSize(currentPreviewObject.size || 0) }}</el-tag>
+          </div>
+          <pre class="text-content"><code>{{ previewContent }}</code></pre>
         </div>
         
         <!-- JSON预览 -->
         <div v-else-if="previewType === 'json'" class="json-preview">
-          <pre>{{ formatJson(previewContent) }}</pre>
+          <div class="json-toolbar">
+            <el-tag size="small" type="success">JSON</el-tag>
+            <el-tag size="small">{{ formatFileSize(currentPreviewObject.size || 0) }}</el-tag>
+            <el-button 
+              size="small" 
+              text 
+              @click="copyToClipboard(formatJson(previewContent))"
+            >
+              <el-icon><CopyDocument /></el-icon>
+              复制
+            </el-button>
+          </div>
+          <pre class="json-content"><code>{{ formatJson(previewContent) }}</code></pre>
         </div>
         
-        <!-- 其他类型 -->
+        <!-- PDF预览 -->
+        <div v-else-if="previewType === 'pdf'" class="pdf-preview">
+          <iframe 
+            :src="previewUrl"
+            style="width: 100%; height: 600px; border: none;"
+            @error="handlePreviewError"
+          >
+            您的浏览器不支持PDF预览
+          </iframe>
+        </div>
+        
+        <!-- 不支持的类型 -->
         <div v-else class="unsupported-preview">
           <el-result
             icon="warning"
             title="预览不支持"
-            sub-title="此文件类型暂不支持在线预览"
+            :sub-title="`${currentPreviewObject.key ? getFileType(currentPreviewObject) : '此'} 类型文件暂不支持在线预览`"
           >
             <template #extra>
-              <el-button type="primary" @click="downloadObject(currentPreviewObject)">
-                下载查看
-              </el-button>
+              <div class="preview-actions">
+                <el-button type="primary" @click="downloadObject(currentPreviewObject)">
+                  <el-icon><Download /></el-icon>
+                  下载查看
+                </el-button>
+                <el-button @click="showObjectInfo(currentPreviewObject)">
+                  <el-icon><InfoFilled /></el-icon>
+                  查看详情
+                </el-button>
+              </div>
             </template>
           </el-result>
         </div>
       </div>
+      
+      <template #footer>
+        <div class="preview-footer">
+          <div class="preview-info">
+            <span>大小: {{ formatFileSize(currentPreviewObject.size || 0) }}</span>
+            <span v-if="currentPreviewObject.lastModified">
+              修改时间: {{ formatDate(currentPreviewObject.lastModified) }}
+            </span>
+          </div>
+          <div class="preview-actions">
+            <el-button @click="downloadObject(currentPreviewObject)">
+              <el-icon><Download /></el-icon>
+              下载
+            </el-button>
+            <el-button @click="showPreviewDialog = false">关闭</el-button>
+          </div>
+        </div>
+      </template>
     </el-dialog>
 
     <!-- 对象详情对话框 -->
@@ -482,7 +573,7 @@ const selectedBucketInfo = ref(null)
 // 上传相关
 const uploadUrl = computed(() => {
   if (!currentBucket.value) return ''
-  return `/api/v1/browse/object-storage/${route.params.id}/upload`
+  return `/api/v1/browse/object_storage/${route.params.id}/upload`
 })
 
 const uploadHeaders = computed(() => ({}))
@@ -892,9 +983,20 @@ function getFileIcon(object: any) {
   if (object.isFolder) return FolderOpened
   
   const key = object.key.toLowerCase()
-  if (/\.(jpg|jpeg|png|gif|bmp|webp)$/.test(key)) return Picture
-  if (/\.(mp4|avi|mov|wmv|flv)$/.test(key)) return VideoPlay
-  if (/\.(zip|rar|tar|gz)$/.test(key)) return Box
+  // 图片
+  if (/\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff|ico)$/.test(key)) return Picture
+  // 视频
+  if (/\.(mp4|avi|mov|wmv|flv|mkv|webm|m4v)$/.test(key)) return VideoPlay
+  // 音频 (使用VideoPlay图标，因为Element Plus没有专门的音频图标)
+  if (/\.(mp3|wav|flac|aac|ogg|m4a|wma)$/.test(key)) return VideoPlay
+  // 压缩包
+  if (/\.(zip|rar|tar|gz|7z|bz2)$/.test(key)) return Box
+  // PDF
+  if (/\.pdf$/.test(key)) return Document
+  // 代码文件
+  if (/\.(js|ts|jsx|tsx|vue|html|css|java|py|cpp|c|h)$/.test(key)) return Document
+  // JSON/配置文件
+  if (/\.(json|yaml|yml|xml|ini|conf|cfg)$/.test(key)) return Document
   
   return Document
 }
@@ -905,12 +1007,20 @@ function getFileIconClass(object: any) {
     classes.push('directory-icon')
   } else {
     const key = object.key.toLowerCase()
-    if (/\.(jpg|jpeg|png|gif|bmp|webp)$/.test(key)) {
+    if (/\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff|ico)$/.test(key)) {
       classes.push('image-icon')
-    } else if (/\.(mp4|avi|mov|wmv|flv)$/.test(key)) {
+    } else if (/\.(mp4|avi|mov|wmv|flv|mkv|webm|m4v)$/.test(key)) {
       classes.push('video-icon')
-    } else if (/\.(zip|rar|tar|gz)$/.test(key)) {
+    } else if (/\.(mp3|wav|flac|aac|ogg|m4a|wma)$/.test(key)) {
+      classes.push('audio-icon')
+    } else if (/\.(zip|rar|tar|gz|7z|bz2)$/.test(key)) {
       classes.push('archive-icon')
+    } else if (/\.pdf$/.test(key)) {
+      classes.push('pdf-icon')
+    } else if (/\.(js|ts|jsx|tsx|vue|html|css|java|py|cpp|c|h)$/.test(key)) {
+      classes.push('code-icon')
+    } else if (/\.(json|yaml|yml|xml|ini|conf|cfg)$/.test(key)) {
+      classes.push('config-icon')
     }
   }
   return classes.join(' ')
@@ -937,14 +1047,18 @@ function getFileType(object: any): string {
   
   // 基于文件扩展名推断
   const key = object.key.toLowerCase()
-  if (/\.(jpg|jpeg|png|gif|bmp|webp)$/.test(key)) return '图片'
-  if (/\.(mp4|avi|mov|wmv|flv)$/.test(key)) return '视频'
-  if (/\.(mp3|wav|flac|aac)$/.test(key)) return '音频'
-  if (/\.(txt|md|log)$/.test(key)) return '文本'
+  if (/\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff|ico)$/.test(key)) return '图片'
+  if (/\.(mp4|avi|mov|wmv|flv|mkv|webm|m4v)$/.test(key)) return '视频'
+  if (/\.(mp3|wav|flac|aac|ogg|m4a|wma)$/.test(key)) return '音频'
+  if (/\.(txt|md|log|csv)$/.test(key)) return '文本'
   if (/\.json$/.test(key)) return 'JSON'
-  if (/\.xml$/.test(key)) return 'XML'
+  if (/\.(xml|yaml|yml)$/.test(key)) return '配置文件'
   if (/\.pdf$/.test(key)) return 'PDF'
-  if (/\.(zip|rar|tar|gz|7z)$/.test(key)) return '压缩包'
+  if (/\.(zip|rar|tar|gz|7z|bz2)$/.test(key)) return '压缩包'
+  if (/\.(js|ts|jsx|tsx)$/.test(key)) return 'JavaScript'
+  if (/\.(vue|html|css)$/.test(key)) return 'Web文件'
+  if (/\.(java|py|cpp|c|h)$/.test(key)) return '代码文件'
+  if (/\.(ini|conf|cfg)$/.test(key)) return '配置文件'
   
   return '文件'
 }
@@ -1056,10 +1170,38 @@ function formatDate(dateStr: string, short = false): string {
 
 function canPreview(object: any): boolean {
   const key = object.key.toLowerCase()
-  const textExts = /\.(txt|md|json|xml|csv|log)$/
-  const imageExts = /\.(jpg|jpeg|png|gif|bmp|webp)$/
+  const textExts = /\.(txt|md|json|xml|csv|log|yaml|yml|ini|conf|cfg|js|ts|html|css|sql|py|java|cpp|c|h|vue|jsx|tsx)$/
+  const imageExts = /\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff|ico)$/
+  const videoExts = /\.(mp4|avi|mov|wmv|flv|mkv|webm|m4v)$/
+  const audioExts = /\.(mp3|wav|flac|aac|ogg|m4a|wma)$/
   
-  return textExts.test(key) || imageExts.test(key)
+  return textExts.test(key) || imageExts.test(key) || videoExts.test(key) || audioExts.test(key)
+}
+
+// 添加新的文件类型检测函数
+function getPreviewType(object: any): string {
+  const key = object.key.toLowerCase()
+  
+  if (/\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff|ico)$/.test(key)) {
+    return 'image'
+  }
+  if (/\.(mp4|avi|mov|wmv|flv|mkv|webm|m4v)$/.test(key)) {
+    return 'video'
+  }
+  if (/\.(mp3|wav|flac|aac|ogg|m4a|wma)$/.test(key)) {
+    return 'audio'
+  }
+  if (/\.json$/.test(key)) {
+    return 'json'
+  }
+  if (/\.(txt|md|csv|log|yaml|yml|ini|conf|cfg|js|ts|html|css|sql|py|java|cpp|c|h|vue|jsx|tsx|xml)$/.test(key)) {
+    return 'text'
+  }
+  if (/\.pdf$/.test(key)) {
+    return 'pdf'
+  }
+  
+  return 'unsupported'
 }
 
 async function previewObject(object: any) {
@@ -1068,25 +1210,47 @@ async function previewObject(object: any) {
     currentPreviewObject.value = object
     
     const id = route.params.id as string
-    const key = object.key.toLowerCase()
+    const detectedType = getPreviewType(object)
+    previewType.value = detectedType
     
-    if (/\.(jpg|jpeg|png|gif|bmp|webp)$/.test(key)) {
-      previewType.value = 'image'
-      previewUrl.value = `/api/v1/browse/object-storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
-    } else if (/\.(txt|md|csv|log)$/.test(key)) {
-      previewType.value = 'text'
-      const response = await fetch(`/api/v1/browse/object-storage/${id}/content?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
-      previewContent.value = await response.text()
-    } else if (/\.json$/.test(key)) {
-      previewType.value = 'json'
-      const response = await fetch(`/api/v1/browse/object-storage/${id}/content?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
-      previewContent.value = await response.text()
-    } else {
-      previewType.value = 'unsupported'
+    switch (detectedType) {
+      case 'image':
+        previewUrl.value = `/v1/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+        break
+        
+      case 'video':
+      case 'audio':
+        previewUrl.value = `/v1/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+        break
+        
+      case 'text':
+      case 'json':
+        try {
+          const response = await fetch(`/api/v1/browse/object_storage/${id}/content?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
+          if (response.ok) {
+            const data = await response.json()
+            previewContent.value = data.content || ''
+          } else {
+            throw new Error('Failed to fetch content')
+          }
+        } catch (error) {
+          console.error('获取文本内容失败:', error)
+          ElMessage.error('获取文件内容失败')
+          previewType.value = 'unsupported'
+        }
+        break
+        
+      case 'pdf':
+        previewUrl.value = `/v1/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+        break
+        
+      default:
+        previewType.value = 'unsupported'
     }
     
     showPreviewDialog.value = true
   } catch (error) {
+    console.error('预览失败:', error)
     ElMessage.error('预览失败')
   } finally {
     loading.value = false
@@ -1147,7 +1311,7 @@ async function handleObjectAction({ action, object }: { action: string, object: 
 async function showObjectInfo(object: any) {
   try {
     const id = route.params.id as string
-    const response = await fetch(`/api/v1/browse/object-storage/${id}/info?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
+    const response = await fetch(`/api/v1/browse/object_storage/${id}/info?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
     selectedObjectInfo.value = await response.json()
     showInfoDialog.value = true
   } catch (error) {
@@ -1158,12 +1322,10 @@ async function showObjectInfo(object: any) {
 async function copyObjectUrl(object: any) {
   try {
     const id = route.params.id as string
-    const url = `/api/v1/browse/object-storage/${id}/url?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
-    const response = await fetch(url)
-    const data = await response.json()
+    const url = `${window.location.origin}/api/v1/browse/object_storage/${id}/download?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
     
-    await navigator.clipboard.writeText(data.url)
-    ElMessage.success('链接已复制到剪贴板')
+    await navigator.clipboard.writeText(url)
+    ElMessage.success('下载链接已复制到剪贴板')
   } catch (error) {
     ElMessage.error('复制链接失败')
   }
@@ -1178,13 +1340,9 @@ async function deleteObject(object: any) {
     )
     
     const id = route.params.id as string
-    const response = await fetch(`/api/v1/browse/object-storage/${id}/delete`, {
+    const response = await fetch(`/api/v1/browse/object_storage/${id}?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`, {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        bucket: currentBucket.value,
-        keys: [object.key]
-      })
+      headers: { 'Content-Type': 'application/json' }
     })
     
     if (response.ok) {
@@ -1211,27 +1369,38 @@ async function deleteSelectedObjects() {
     )
     
     const id = route.params.id as string
-    const keys = selectedObjects.value.map(obj => obj.key)
+    let successCount = 0
+    let errorCount = 0
     
-    const response = await fetch(`/api/v1/browse/object-storage/${id}/delete`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        bucket: currentBucket.value,
-        keys
-      })
-    })
+    // 循环删除每个对象
+    for (const obj of selectedObjects.value) {
+      try {
+        const response = await fetch(`/api/v1/browse/object_storage/${id}?bucket=${currentBucket.value}&key=${encodeURIComponent(obj.key)}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' }
+        })
+        
+        if (response.ok) {
+          successCount++
+        } else {
+          errorCount++
+        }
+      } catch (error) {
+        errorCount++
+        console.error(`删除对象 ${obj.key} 失败:`, error)
+      }
+    }
     
-    if (response.ok) {
-      ElMessage.success('删除成功')
+    if (successCount > 0) {
+      ElMessage.success(`成功删除 ${successCount} 个对象${errorCount > 0 ? `, ${errorCount} 个失败` : ''}`)
       selectedObjects.value = []
       await refreshData()
     } else {
-      throw new Error('删除失败')
+      throw new Error('所有对象删除失败')
     }
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error('删除失败')
+      ElMessage.error('批量删除失败')
     }
   }
 }
@@ -1250,7 +1419,7 @@ async function handleBucketAction({ action, bucket }: { action: string, bucket: 
 async function showBucketInfo(bucketName: string) {
   try {
     const id = route.params.id as string
-    const response = await fetch(`/api/v1/browse/object-storage/${id}/bucket-info?bucket=${bucketName}`)
+    const response = await fetch(`/api/v1/browse/object_storage/${id}/bucket-info?bucket=${bucketName}`)
     selectedBucketInfo.value = await response.json()
     showBucketInfoDialog.value = true
   } catch (error) {
@@ -1291,6 +1460,26 @@ function handleUploadSuccess(response: any, file: any) {
 
 function handleUploadError(error: any, file: any) {
   ElMessage.error(`${file.name} 上传失败`)
+}
+
+// 预览相关辅助方法
+function handleImageLoad() {
+  console.log('图片加载完成')
+}
+
+function handlePreviewError(event: Event) {
+  console.error('预览加载失败:', event)
+  ElMessage.error('预览加载失败，请尝试下载文件查看')
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制到剪贴板')
+  } catch (error) {
+    console.error('复制失败:', error)
+    ElMessage.error('复制失败')
+  }
 }
 </script>
 
@@ -1623,7 +1812,8 @@ function handleUploadError(error: any, file: any) {
 }
 
 /* 图标颜色 */
-.folder-icon {
+.folder-icon,
+.directory-icon {
   color: #409eff;
 }
 
@@ -1635,32 +1825,183 @@ function handleUploadError(error: any, file: any) {
   color: #e6a23c;
 }
 
+.audio-icon {
+  color: #9254de;
+}
+
 .archive-icon {
   color: #f56c6c;
 }
 
+.pdf-icon {
+  color: #ff4d4f;
+}
+
+.code-icon {
+  color: #1890ff;
+}
+
+.config-icon {
+  color: #52c41a;
+}
+
 /* 预览样式 */
 .object-preview {
-  max-height: 600px;
+  min-height: 400px;
+  max-height: 80vh;
   overflow-y: auto;
 }
 
+/* 图片预览 */
 .image-preview {
   text-align: center;
+  padding: 20px;
+  background: #fafbfc;
+  border-radius: 8px;
 }
 
 .image-preview img {
   max-width: 100%;
-  max-height: 500px;
+  max-height: 600px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s;
 }
 
-.text-preview pre,
-.json-preview pre {
-  background: #f5f7fa;
-  padding: 16px;
-  border-radius: 4px;
+.image-preview img:hover {
+  transform: scale(1.02);
+}
+
+/* 视频预览 */
+.video-preview {
+  text-align: center;
+  padding: 20px;
+  background: #000;
+  border-radius: 8px;
+}
+
+.video-preview video {
+  border-radius: 8px;
+  max-width: 100%;
+  max-height: 600px;
+}
+
+/* 音频预览 */
+.audio-preview {
+  padding: 40px 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 8px;
+  color: white;
+}
+
+.audio-container {
+  text-align: center;
+}
+
+.audio-info {
+  margin-bottom: 30px;
+}
+
+.audio-info .el-icon {
+  margin-bottom: 16px;
+  color: white;
+}
+
+.audio-name {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.audio-size {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+/* 文本预览 */
+.text-preview {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.text-toolbar,
+.json-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.text-content,
+.json-content {
+  margin: 0;
+  padding: 20px;
+  background: #ffffff;
+  border: none;
+  font-family: 'JetBrains Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.6;
   white-space: pre-wrap;
-  font-family: 'Courier New', monospace;
+  word-wrap: break-word;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.json-content {
+  background: #f8f9fa;
+  color: #2c3e50;
+}
+
+/* JSON语法高亮样式 */
+.json-content code {
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+}
+
+/* PDF预览 */
+.pdf-preview {
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f5f5f5;
+}
+
+/* 预览对话框页脚 */
+.preview-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  border-top: 1px solid #e4e7ed;
+  margin-top: 20px;
+}
+
+.preview-info {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+  color: #666;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 不支持预览的样式优化 */
+.unsupported-preview {
+  padding: 40px 20px;
+}
+
+.unsupported-preview .preview-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 16px;
 }
 
 :deep(.el-breadcrumb__item.is-link) {

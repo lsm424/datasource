@@ -188,7 +188,7 @@
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50, 100]"
-          :total="filteredUsers.length"
+          :total="totalCount"
           layout="total, sizes, prev, pager, next, jumper"
           @size-change="handlePageSizeChange"
           @current-change="handleCurrentPageChange"
@@ -308,47 +308,15 @@ import type { User, UserRole } from '@/types/auth'
 
 const authStore = useAuthStore()
 
-// 模拟数据
-const mockUsers: User[] = [
-  {
-    id: '1',
-    username: 'admin',
-    email: 'admin@example.com',
-    name: '系统管理员',
-    role: 'admin' as UserRole,
-    phone: '13800138000',
-    company: '数据浏览系统',
-    bio: '系统管理员',
-    isActive: true,
-    isVerified: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    lastLoginAt: new Date().toISOString(),
-    avatar: ''
-  },
-  {
-    id: '2',
-    username: 'user1',
-    email: 'user1@example.com',
-    name: '张三',
-    role: 'user' as UserRole,
-    phone: '13800138001',
-    company: '某公司',
-    bio: '数据分析师',
-    isActive: true,
-    isVerified: true,
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    lastLoginAt: new Date().toISOString(),
-    avatar: ''
-  }
-]
+// 导入用户API
+import { userApi } from '@/api/users'
 
 // 表单引用
 const userFormRef = ref<FormInstance>()
 
 // 响应式数据
-const users = ref<User[]>(mockUsers)
+const users = ref<User[]>([])
+const totalCount = ref(0)
 const isLoading = ref(false)
 const isSaving = ref(false)
 const searchQuery = ref('')
@@ -368,9 +336,9 @@ const userForm = reactive({
   name: '',
   phone: '',
   company: '',
+  bio: '',
   role: 'user' as UserRole,
-  password: '',
-  isActive: true
+  password: ''
 })
 
 // 验证规则
@@ -396,67 +364,49 @@ const userRules: FormRules = {
 }
 
 // 计算属性
-const filteredUsers = computed(() => {
-  let result = users.value.slice()
-  
-  // 搜索过滤
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    result = result.filter(user => 
-      user.username.toLowerCase().includes(query) ||
-      user.name.toLowerCase().includes(query) ||
-      user.email.toLowerCase().includes(query) ||
-      user.company?.toLowerCase().includes(query)
-    )
-  }
-  
-  // 角色过滤
-  if (filterRole.value) {
-    result = result.filter(user => user.role === filterRole.value)
-  }
-  
-  // 状态过滤
-  if (filterStatus.value !== '') {
-    result = result.filter(user => user.isActive === filterStatus.value)
-  }
-  
-  // 排序
-  if (sortField.value) {
-    result.sort((a, b) => {
-      const aVal = a[sortField.value as keyof User]
-      const bVal = b[sortField.value as keyof User]
-      
-      if (sortOrder.value === 'descending') {
-        return aVal > bVal ? -1 : 1
-      } else {
-        return aVal > bVal ? 1 : -1
-      }
-    })
-  }
-  
-  return result
-})
-
 const paginatedUsers = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return filteredUsers.value.slice(start, end)
+  // 现在由服务器端处理分页和过滤，直接返回当前的用户列表
+  return users.value
 })
 
 // 方法
 const refreshList = async () => {
   isLoading.value = true
-  // 模拟API调用
-  await new Promise(resolve => setTimeout(resolve, 1000))
-  isLoading.value = false
+  try {
+    const params = {
+      page: currentPage.value,
+      limit: pageSize.value,
+      search: searchQuery.value || undefined,
+      role: filterRole.value || undefined,
+      is_active: filterStatus.value !== '' ? filterStatus.value : undefined
+    }
+    
+    const response = await userApi.getUsers(params)
+    
+    // 处理响应数据
+    if (Array.isArray(response)) {
+      users.value = response
+      totalCount.value = response.length
+    } else if (response && response.data) {
+      users.value = response.data
+      totalCount.value = response.total || 0
+    }
+  } catch (error: any) {
+    console.error('获取用户列表失败:', error)
+    ElMessage.error('获取用户列表失败')
+  } finally {
+    isLoading.value = false
+  }
 }
 
 const handleSearch = () => {
   currentPage.value = 1
+  refreshList()
 }
 
 const handleFilter = () => {
   currentPage.value = 1
+  refreshList()
 }
 
 const handleSort = ({ prop, order }: { prop: string; order: string }) => {
@@ -467,10 +417,12 @@ const handleSort = ({ prop, order }: { prop: string; order: string }) => {
 const handlePageSizeChange = (size: number) => {
   pageSize.value = size
   currentPage.value = 1
+  refreshList()
 }
 
 const handleCurrentPageChange = (page: number) => {
   currentPage.value = page
+  refreshList()
 }
 
 const editUser = (user: User) => {
@@ -481,9 +433,10 @@ const editUser = (user: User) => {
     name: user.name,
     phone: user.phone || '',
     company: user.company || '',
+    bio: user.bio || '',
     role: user.role,
     password: '',
-    isActive: user.isActive
+    // 注意：创建用户时不需要发送is_active字段，后端默认为激活状态
   })
   showCreateDialog.value = true
 }
@@ -501,22 +454,25 @@ const toggleUserStatus = async (user: User) => {
       }
     )
     
-    // 模拟API调用
-    user.isActive = !user.isActive
+    // 调用API更新用户状态  
+    await userApi.updateUser(user.id, { is_active: !user.isActive })
     ElMessage.success(`用户${action}成功`)
+    // 刷新列表
+    await refreshList()
   } catch (error) {
-    // 用户取消
+    // 用户取消或API错误
+    if (error !== 'cancel') {
+      ElMessage.error(`${action}用户失败`)
+    }
   }
 }
 
 const deleteUser = async (user: User) => {
   try {
-    // 模拟API调用
-    const index = users.value.findIndex(u => u.id === user.id)
-    if (index !== -1) {
-      users.value.splice(index, 1)
-    }
+    await userApi.deleteUser(user.id)
     ElMessage.success('用户删除成功')
+    // 刷新列表
+    await refreshList()
   } catch (error: any) {
     ElMessage.error(`删除用户失败：${error.message}`)
   }
@@ -529,29 +485,21 @@ const saveUser = async () => {
     if (valid) {
       isSaving.value = true
       try {
-        // 模拟API调用
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        
         if (editingUser.value) {
           // 更新用户
-          Object.assign(editingUser.value, userForm)
+          await userApi.updateUser(editingUser.value.id, userForm)
           ElMessage.success('用户更新成功')
         } else {
           // 创建新用户
-          const newUser: User = {
-            id: Date.now().toString(),
-            ...userForm,
-            isVerified: false,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            avatar: ''
-          }
-          users.value.unshift(newUser)
+          console.log('🚀 准备创建用户，发送数据:', userForm)
+          await userApi.createUser(userForm)
           ElMessage.success('用户创建成功')
         }
         
         showCreateDialog.value = false
         resetForm()
+        // 刷新列表
+        await refreshList()
       } catch (error: any) {
         ElMessage.error(`操作失败：${error.message}`)
       } finally {
@@ -569,9 +517,9 @@ const resetForm = () => {
     name: '',
     phone: '',
     company: '',
+    bio: '',
     role: 'user' as UserRole,
-    password: '',
-    isActive: true
+    password: ''
   })
   userFormRef.value?.clearValidate()
 }

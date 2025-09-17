@@ -200,6 +200,9 @@
                     <el-dropdown-item command="test" icon="Link" :disabled="testingConnections[row.id]">
                       {{ testingConnections[row.id] ? '测试中...' : '测试连接' }}
                     </el-dropdown-item>
+                    <el-dropdown-item command="stats" icon="DataAnalysis" :disabled="runningStats[row.id]">
+                      {{ runningStats[row.id] ? '统计中...' : '统计' }}
+                    </el-dropdown-item>
                     <el-dropdown-item 
                       command="delete" 
                       icon="Delete"
@@ -245,7 +248,8 @@ import {
   Box,
   Connection,
   View,
-  MoreFilled
+  MoreFilled,
+  DataAnalysis
 } from '@element-plus/icons-vue'
 
 import { useAuthStore } from '@/stores/auth'
@@ -265,6 +269,7 @@ const pageSize = ref(20)
 const sortField = ref('')
 const sortOrder = ref('')
 const testingConnections = ref<Record<string, boolean>>({})
+const runningStats = ref<Record<string, boolean>>({})
 const totalCount = ref(0)
 
 // 计算属性 - 直接使用store中的数据，因为后端已经处理了分页和过滤
@@ -363,6 +368,89 @@ const deleteDataSource = async (datasource: DataSource) => {
   }
 }
 
+const runDataSourceStats = async (datasource: DataSource) => {
+  if (!datasource.is_active) {
+    ElMessage.warning('数据源未激活，无法执行统计')
+    return
+  }
+
+  runningStats.value[datasource.id] = true
+  
+  try {
+    const response = await dataSourceStore.runDataSourceStats(datasource.id)
+    if (response.data) {
+      ElMessage.success(`数据源 ${datasource.name} 的统计任务已启动，请稍后查看结果`)
+      
+      // 2秒后自动刷新数据源列表以显示更新的统计信息
+      setTimeout(async () => {
+        await refreshList()
+        
+        // 显示统计完成通知，并提供查看选项
+        ElMessageBox.confirm(
+          `数据源 ${datasource.name} 的统计已完成。\n\n您可以：\n• 查看详细统计信息\n• 前往仪表盘查看总览数据（建议点击仪表盘的刷新按钮）`,
+          '统计完成',
+          {
+            confirmButtonText: '查看统计详情',
+            cancelButtonText: '前往仪表盘',
+            type: 'success',
+          }
+        ).then(() => {
+          // 用户选择查看统计详情
+          showStatsHistory(datasource)
+        }).catch(() => {
+          // 用户选择前往仪表盘
+          router.push('/dashboard')
+        })
+      }, 2000)
+    }
+  } catch (error: any) {
+    ElMessage.error(`启动统计任务失败：${error.message}`)
+  } finally {
+    runningStats.value[datasource.id] = false
+  }
+}
+
+const showStatsHistory = async (datasource: DataSource) => {
+  try {
+    const response = await dataSourceStore.getDataSourceStats(datasource.id, 10)
+    if (response.data) {
+      const statsData = response.data
+      
+      let historyText = `数据源：${statsData.datasource_name}\n\n`
+      
+      if (statsData.current_stats) {
+        const stats = statsData.current_stats
+        historyText += `当前统计信息：\n`
+        historyText += `- 记录数：${formatNumber(stats.record_count)}\n`
+        historyText += `- 数据大小：${formatFileSize(stats.data_size)}\n`
+        historyText += `- 文件数：${formatNumber(stats.file_count)}\n`
+        historyText += `- 最后更新：${new Date(stats.last_updated).toLocaleString()}\n`
+        historyText += `- 状态：${stats.status === 'completed' ? '成功' : stats.status === 'failed' ? '失败' : '进行中'}\n\n`
+      } else {
+        historyText += `暂无统计信息\n\n`
+      }
+      
+      if (statsData.history && statsData.history.length > 0) {
+        historyText += `统计历史（最近${statsData.history.length}条）：\n`
+        statsData.history.forEach((record, index) => {
+          historyText += `${index + 1}. ${new Date(record.stats_date).toLocaleDateString()}\n`
+          historyText += `   记录数：${formatNumber(record.record_count)}, 大小：${formatFileSize(record.data_size)}, 状态：${record.status === 'completed' ? '成功' : '失败'}\n`
+          if (record.error_message) {
+            historyText += `   错误：${record.error_message}\n`
+          }
+        })
+      }
+      
+      ElMessageBox.alert(historyText, `统计信息 - ${statsData.datasource_name}`, {
+        confirmButtonText: '确定',
+        type: 'info'
+      })
+    }
+  } catch (error: any) {
+    ElMessage.error(`获取统计信息失败：${error.message}`)
+  }
+}
+
 // 处理管理员操作下拉菜单
 const handleAdminAction = async (command: string, row: DataSource) => {
   switch (command) {
@@ -373,6 +461,12 @@ const handleAdminAction = async (command: string, row: DataSource) => {
     case 'test':
       if (!testingConnections.value[row.id]) {
         await testConnection(row)
+      }
+      break
+
+    case 'stats':
+      if (!runningStats.value[row.id]) {
+        await runDataSourceStats(row)
       }
       break
     

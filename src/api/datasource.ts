@@ -49,6 +49,37 @@ export const dataSourceApi = {
   // 获取数据源统计信息
   getStatistics: (): Promise<ApiResponse<any>> => {
     return get<ApiResponse<any>>('/datasources/statistics')
+  },
+
+  // 运行单个数据源统计任务
+  runDataSourceStats: (id: string): Promise<ApiResponse<{datasource_id: string, datasource_name: string, status: string}>> => {
+    return post<ApiResponse<{datasource_id: string, datasource_name: string, status: string}>>(`/datasources/${id}/stats`)
+  },
+
+  // 获取单个数据源统计历史
+  getDataSourceStats: (id: string, limit = 10): Promise<ApiResponse<{
+    datasource_id: string
+    datasource_name: string
+    current_stats: {
+      record_count: number
+      data_size: number
+      file_count: number
+      last_updated: string
+      status: string
+    } | null
+    history: Array<{
+      id: string
+      stats_date: string
+      record_count: number
+      data_size: number
+      file_count: number
+      status: string
+      error_message?: string
+      created_at?: string
+    }>
+    total_records: number
+  }>> => {
+    return get<ApiResponse<any>>(`/datasources/${id}/stats`, { params: { limit } })
   }
 }
 

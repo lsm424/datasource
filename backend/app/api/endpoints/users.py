@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -145,6 +145,18 @@ async def create_user(
     db: Session = Depends(get_db)
 ) -> Any:
     """创建用户（仅管理员）"""
+    
+    print(f"🔍 开始创建用户: {user_create.username}")
+    print(f"🔍 用户数据字段:")
+    print(f"  - username: {user_create.username}")
+    print(f"  - email: {user_create.email}")
+    print(f"  - name: {user_create.name}")
+    print(f"  - phone: {user_create.phone}")
+    print(f"  - company: {user_create.company}")
+    print(f"  - bio: {user_create.bio}")
+    print(f"  - role: {user_create.role} (type: {type(user_create.role)})")
+    
+    logging.info(f"Creating user: {user_create.username} ({user_create.email})")
     
     # 检查用户名是否已存在
     if db.query(User).filter(User.username == user_create.username).first():

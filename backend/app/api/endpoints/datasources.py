@@ -1,6 +1,7 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session
+from datetime import datetime
 
 from app.core.database import get_db
 from app.core.deps import get_current_active_user, get_current_admin_user
@@ -18,6 +19,7 @@ from app.schemas.datasource import (
     DataSourceListQuery
 )
 from app.schemas.base import DataResponse, ListResponse, BaseResponse
+from app.services.data_stats_service import DataStatsService
 
 router = APIRouter()
 
@@ -325,3 +327,147 @@ async def test_datasource_connection(
             data=result,
             message="连接测试完成"
         )
+
+
+@router.post("/{datasource_id}/stats", response_model=DataResponse[dict])
+async def run_datasource_stats(
+    datasource_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """运行单个数据源的统计任务"""
+    
+    # 获取数据源
+    datasource = db.query(DataSource).filter(DataSource.id == datasource_id).first()
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="数据源不存在"
+        )
+    
+    # 检查数据源是否激活
+    if not datasource.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="数据源未激活，无法执行统计"
+        )
+    
+    try:
+        # 在后台执行统计任务
+        background_tasks.add_task(
+            _run_single_datasource_stats_task,
+            datasource_id,
+            db.connection().engine
+        )
+        
+        return DataResponse(
+            data={
+                "datasource_id": datasource_id,
+                "datasource_name": datasource.name,
+                "status": "started"
+            },
+            message=f"数据源 {datasource.name} 的统计任务已启动"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"启动统计任务失败: {str(e)}"
+        )
+
+
+async def _run_single_datasource_stats_task(datasource_id: str, engine):
+    """后台执行单个数据源统计任务"""
+    from sqlalchemy.orm import sessionmaker
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    
+    try:
+        with SessionLocal() as db:
+            # 获取数据源
+            datasource = db.query(DataSource).filter(DataSource.id == datasource_id).first()
+            if not datasource:
+                logger.error(f"数据源不存在: {datasource_id}")
+                return
+            
+            logger.info(f"开始统计数据源: {datasource.name}")
+            
+            # 创建统计服务实例
+            stats_service = DataStatsService(db)
+            
+            # 使用当前时间作为统计日期
+            stats_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            # 执行单个数据源统计
+            result = await stats_service._calculate_single_datasource(datasource, stats_date)
+            
+            if result:
+                logger.info(f"数据源统计完成: {datasource.name}")
+            else:
+                logger.error(f"数据源统计失败: {datasource.name}")
+    
+    except Exception as e:
+        logger.error(f"执行单个数据源统计任务失败: {e}")
+
+
+@router.get("/{datasource_id}/stats", response_model=DataResponse[dict])
+async def get_datasource_stats(
+    datasource_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+    limit: int = Query(10, ge=1, le=50, description="返回记录数量")
+) -> Any:
+    """获取单个数据源的统计历史"""
+    
+    # 获取数据源
+    datasource = db.query(DataSource).filter(DataSource.id == datasource_id).first()
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="数据源不存在"
+        )
+    
+    # 获取该数据源的统计记录
+    stats_records = db.query(DataSourceStatsModel).filter(
+        DataSourceStatsModel.datasource_id == datasource_id
+    ).order_by(DataSourceStatsModel.stats_date.desc()).limit(limit).all()
+    
+    # 转换为字典格式
+    stats_history = []
+    for record in stats_records:
+        stats_history.append({
+            "id": record.id,
+            "stats_date": record.stats_date.isoformat(),
+            "record_count": record.record_count,
+            "data_size": record.data_size,
+            "file_count": record.file_count,
+            "status": record.status,
+            "error_message": record.error_message,
+            "created_at": record.created_at.isoformat() if record.created_at else None
+        })
+    
+    # 获取最新的统计记录作为当前状态
+    latest_stats = stats_records[0] if stats_records else None
+    current_stats = None
+    if latest_stats:
+        current_stats = {
+            "record_count": latest_stats.record_count,
+            "data_size": latest_stats.data_size,
+            "file_count": latest_stats.file_count,
+            "last_updated": latest_stats.stats_date.isoformat(),
+            "status": latest_stats.status
+        }
+    
+    return DataResponse(
+        data={
+            "datasource_id": datasource_id,
+            "datasource_name": datasource.name,
+            "current_stats": current_stats,
+            "history": stats_history,
+            "total_records": len(stats_history)
+        },
+        message="获取数据源统计信息成功"
+    )

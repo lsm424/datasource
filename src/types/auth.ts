@@ -11,10 +11,15 @@ export interface User {
   email: string
   name: string
   role: UserRole
+  phone?: string
+  company?: string
+  bio?: string
+  avatar?: string
+  isActive: boolean
+  isVerified: boolean
   createdAt: string
   updatedAt: string
   lastLoginAt?: string
-  isActive: boolean
 }
 
 // 登录表单接口
@@ -73,6 +78,10 @@ export interface CreateUserForm {
   name: string
   password: string
   role: UserRole
+  phone?: string
+  company?: string
+  bio?: string
+  isActive?: boolean
 }
 
 // 用户更新表单接口（管理员用）
@@ -80,6 +89,10 @@ export interface AdminUpdateUserForm {
   name?: string
   email?: string
   role?: UserRole
+  phone?: string
+  company?: string
+  bio?: string
+  avatar?: string
   isActive?: boolean
 }
 

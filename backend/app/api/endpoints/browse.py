@@ -799,11 +799,11 @@ async def upload_object(
         )
 
 
-@router.get("/object_storage/{datasource_id}/buckets/{bucket_name}/objects/{object_name}")
+@router.get("/object_storage/{datasource_id}/download")
 async def download_object(
     datasource_id: str,
-    bucket_name: str,
-    object_name: str,
+    bucket: str = Query(..., description="存储桶名称"),
+    key: str = Query(..., description="对象键名"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> StreamingResponse:
@@ -827,10 +827,10 @@ async def download_object(
         minio_service = create_minio_service(config)
         
         # 获取对象信息
-        obj_info = minio_service.get_object_info(bucket_name, object_name)
+        obj_info = minio_service.get_object_info(bucket, key)
         
         # 下载对象
-        response = minio_service.download_object(bucket_name, object_name)
+        response = minio_service.download_object(bucket, key)
         
         def iterfile():
             try:
@@ -844,7 +844,7 @@ async def download_object(
             iterfile(),
             media_type=obj_info.get("content_type", "application/octet-stream"),
             headers={
-                "Content-Disposition": f"attachment; filename={object_name}",
+                "Content-Disposition": f"attachment; filename={key}",
                 "Content-Length": str(obj_info.get("size", 0))
             }
         )
@@ -857,11 +857,11 @@ async def download_object(
         )
 
 
-@router.delete("/object_storage/{datasource_id}/buckets/{bucket_name}/objects/{object_name}")
+@router.delete("/object_storage/{datasource_id}")
 async def delete_object(
     datasource_id: str,
-    bucket_name: str,
-    object_name: str,
+    bucket: str = Query(..., description="存储桶名称"),
+    key: str = Query(..., description="对象键名"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Any:
@@ -885,12 +885,12 @@ async def delete_object(
         minio_service = create_minio_service(config)
         
         # 删除对象
-        success = minio_service.delete_object(bucket_name, object_name)
+        success = minio_service.delete_object(bucket, key)
         
         if success:
             return DataResponse(
                 data={"success": True},
-                message=f"对象 '{object_name}' 删除成功"
+                message=f"对象 '{key}' 删除成功"
             )
         else:
             raise Exception("删除对象失败")
@@ -903,11 +903,11 @@ async def delete_object(
         )
 
 
-@router.get("/object_storage/{datasource_id}/buckets/{bucket_name}/objects/{object_name}/info", response_model=DataResponse[ObjectInfo])
+@router.get("/object_storage/{datasource_id}/info", response_model=DataResponse[ObjectInfo])
 async def get_object_info(
     datasource_id: str,
-    bucket_name: str,
-    object_name: str,
+    bucket: str = Query(..., description="存储桶名称"),
+    key: str = Query(..., description="对象键名"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Any:
@@ -931,7 +931,7 @@ async def get_object_info(
         minio_service = create_minio_service(config)
         
         # 获取对象信息
-        obj_info = minio_service.get_object_info(bucket_name, object_name)
+        obj_info = minio_service.get_object_info(bucket, key)
         
         object_info = ObjectInfo(
             key=obj_info["object_name"],
@@ -952,6 +952,140 @@ async def get_object_info(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取对象信息失败: {str(e)}"
+        )
+
+
+@router.get("/object_storage/{datasource_id}/preview")
+async def preview_object(
+    datasource_id: str,
+    bucket: str = Query(..., description="存储桶名称"),
+    key: str = Query(..., description="对象键名"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> StreamingResponse:
+    """预览对象（支持图片、视频等媒体文件直接预览）"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 获取对象信息
+        obj_info = minio_service.get_object_info(bucket, key)
+        
+        # 下载对象用于预览
+        response = minio_service.download_object(bucket, key)
+        
+        def iterfile():
+            try:
+                for chunk in response.stream(1024):
+                    yield chunk
+            finally:
+                response.close()
+                response.release_conn()
+        
+        # 根据文件类型设置适当的Content-Type
+        content_type = obj_info.get("content_type", "application/octet-stream")
+        
+        # 预览模式，不设置attachment下载头
+        return StreamingResponse(
+            iterfile(),
+            media_type=content_type,
+            headers={
+                "Cache-Control": "max-age=3600",
+                "Content-Length": str(obj_info.get("size", 0))
+            }
+        )
+        
+    except Exception as e:
+        logging.error(f"预览对象失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"预览对象失败: {str(e)}"
+        )
+
+
+@router.get("/object_storage/{datasource_id}/content")
+async def get_object_content(
+    datasource_id: str,
+    bucket: str = Query(..., description="存储桶名称"),
+    key: str = Query(..., description="对象键名"),
+    encoding: str = Query("utf-8", description="文本编码"),
+    max_size: int = Query(1024*1024, description="最大读取大小(字节)"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """获取对象文本内容（用于文本文件预览）"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        # 创建MinIO服务实例
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service(config)
+        
+        # 获取对象信息
+        obj_info = minio_service.get_object_info(bucket, key)
+        
+        # 检查文件大小
+        if obj_info.get("size", 0) > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"文件太大，无法预览。最大支持 {max_size/1024/1024:.1f}MB"
+            )
+        
+        # 下载对象内容
+        response = minio_service.download_object(bucket, key)
+        content_bytes = response.data
+        
+        try:
+            # 尝试解码为文本
+            content_text = content_bytes.decode(encoding)
+            return {"content": content_text, "encoding": encoding, "size": len(content_bytes)}
+        except UnicodeDecodeError:
+            # 如果无法解码，尝试其他编码
+            for fallback_encoding in ['gbk', 'latin1', 'ascii']:
+                try:
+                    content_text = content_bytes.decode(fallback_encoding)
+                    return {"content": content_text, "encoding": fallback_encoding, "size": len(content_bytes)}
+                except UnicodeDecodeError:
+                    continue
+            
+            # 如果所有编码都失败，返回错误
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="无法解码文件内容，可能不是文本文件"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"获取对象内容失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取对象内容失败: {str(e)}"
         )
 
 
