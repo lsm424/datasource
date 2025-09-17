@@ -29,7 +29,9 @@ export default defineConfig({
       dts: true,
     }),
     Components({
-      resolvers: [ElementPlusResolver()],
+      resolvers: [ElementPlusResolver({
+        importStyle: false
+      })],
     }),
     // 添加自定义插件
     disablePollingPlugin(),

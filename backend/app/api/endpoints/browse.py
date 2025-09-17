@@ -356,8 +356,11 @@ async def download_file(
         import os
         import mimetypes
         
-        config = datasource.get_filesystem_config()
+        # 解析配置
+        config = parse_datasource_config(datasource.config)
         base_path = os.path.normpath(config["path"])  # 规范化基础路径
+        
+        logging.info(f"文件系统下载: 数据源={datasource_id}, 请求路径={path}, 基础路径={base_path}")
         
         # 对于网络挂载的路径，尝试使用实际网络路径
         try:
@@ -365,7 +368,9 @@ async def download_file(
             # 如果是网络路径，使用网络路径进行访问
             if real_path.startswith('\\\\'):
                 base_path = real_path
-        except Exception:
+                logging.info(f"使用网络路径: {base_path}")
+        except Exception as e:
+            logging.warning(f"无法获取实际路径: {e}")
             pass  # 如果无法获取实际路径，使用原路径
         
         # 处理路径分隔符，支持Windows和Linux
@@ -377,6 +382,8 @@ async def download_file(
         
         full_path = os.path.join(base_path, relative_path)
         full_path = os.path.normpath(full_path)  # 规范化完整路径
+        
+        logging.info(f"完整文件路径: {full_path}")
         
         # 安全检查，防止路径遍历攻击
         try:
@@ -394,11 +401,45 @@ async def download_file(
                     detail="非法路径"
                 )
         
-        if not os.path.exists(full_path) or os.path.isdir(full_path):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="文件不存在"
-            )
+        # 检查文件是否存在和可访问
+        try:
+            if not os.path.exists(full_path):
+                logging.error(f"文件不存在: {full_path}")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"文件不存在: {path}"
+                )
+            
+            if os.path.isdir(full_path):
+                logging.error(f"路径是目录而非文件: {full_path}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="指定路径是目录，无法下载"
+                )
+            
+            # 检查文件大小
+            file_size = os.path.getsize(full_path)
+            logging.info(f"文件大小: {file_size} bytes")
+            
+        except (OSError, IOError, PermissionError) as e:
+            logging.error(f"文件访问错误: {full_path}, 错误: {e}")
+            # 检查是否为Windows文件锁定错误
+            error_code = getattr(e, 'winerror', None) or getattr(e, 'errno', None)
+            if error_code in [33, 32]:  # Windows文件被锁定或正在使用
+                raise HTTPException(
+                    status_code=status.HTTP_423_LOCKED,
+                    detail=f"文件被其他程序锁定，无法下载: {path}"
+                )
+            elif error_code == 13:  # 权限不足
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"没有权限访问文件: {path}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"文件访问失败: {str(e)}"
+                )
         
         # 获取MIME类型
         mime_type, _ = mimetypes.guess_type(full_path)
@@ -407,16 +448,33 @@ async def download_file(
         
         # 创建文件流
         def file_generator():
-            with open(full_path, "rb") as file:
-                while chunk := file.read(8192):
-                    yield chunk
+            try:
+                with open(full_path, "rb") as file:
+                    while chunk := file.read(8192):
+                        yield chunk
+            except (OSError, IOError, PermissionError) as e:
+                logging.error(f"读取文件时出错 {full_path}: {e}")
+                raise e
         
         filename = os.path.basename(full_path)
+        
+        # 处理中文文件名，使用RFC 5987格式
+        try:
+            # 对文件名进行UTF-8编码
+            from urllib.parse import quote
+            encoded_filename = quote(filename.encode('utf-8'))
+            content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+        except Exception:
+            # 如果编码失败，使用原始文件名
+            content_disposition = f"attachment; filename={filename}"
         
         return StreamingResponse(
             file_generator(),
             media_type=mime_type,
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={
+                "Content-Disposition": content_disposition,
+                "Content-Length": str(file_size)
+            }
         )
         
     except Exception as e:

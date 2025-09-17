@@ -532,11 +532,13 @@ import {
   Picture, VideoPlay, Lock, Folder
 } from '@element-plus/icons-vue'
 import { useDataSourceStore } from '@/stores/datasource'
+import { useAuthStore } from '@/stores/auth'
 import { objectStorageApi } from '@/api/datasource'
 
 const route = useRoute()
 const router = useRouter()
 const dataSourceStore = useDataSourceStore()
+const authStore = useAuthStore()
 
 // 响应式数据
 const loading = ref(false)
@@ -573,7 +575,7 @@ const selectedBucketInfo = ref(null)
 // 上传相关
 const uploadUrl = computed(() => {
   if (!currentBucket.value) return ''
-  return `/api/v1/browse/object_storage/${route.params.id}/upload`
+  return `/api/browse/object_storage/${route.params.id}/upload`
 })
 
 const uploadHeaders = computed(() => ({}))
@@ -1215,18 +1217,18 @@ async function previewObject(object: any) {
     
     switch (detectedType) {
       case 'image':
-        previewUrl.value = `/v1/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+        previewUrl.value = `/api/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
         break
         
       case 'video':
       case 'audio':
-        previewUrl.value = `/v1/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+        previewUrl.value = `/api/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
         break
         
       case 'text':
       case 'json':
         try {
-          const response = await fetch(`/api/v1/browse/object_storage/${id}/content?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
+          const response = await fetch(`/api/browse/object_storage/${id}/content?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
           if (response.ok) {
             const data = await response.json()
             previewContent.value = data.content || ''
@@ -1241,7 +1243,7 @@ async function previewObject(object: any) {
         break
         
       case 'pdf':
-        previewUrl.value = `/v1/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+        previewUrl.value = `/api/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
         break
         
       default:
@@ -1273,14 +1275,48 @@ async function downloadObject(object: any) {
   }
   
   try {
+    loading.value = true
     const id = route.params.id as string
-    const blob = await objectStorageApi.downloadObject(id, currentBucket.value, object.key)
+    
+    // 使用fetch携带认证信息下载
+    if (!authStore.isAuthenticated) {
+      ElMessage.error('请先登录')
+      return
+    }
+    
+    const token = authStore.token || localStorage.getItem('auth_token')
+    if (!token) {
+      ElMessage.error('认证信息丢失，请重新登录')
+      return
+    }
+    
+    const downloadUrl = `/api/browse/object_storage/${id}/download?bucket=${encodeURIComponent(currentBucket.value)}&key=${encodeURIComponent(object.key)}`
+    
+    const response = await fetch(downloadUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    
+    if (!response.ok) {
+      throw new Error(`下载失败: ${response.status} ${response.statusText}`)
+    }
+    
+    const blob = await response.blob()
+    
+    // 验证blob有效性
+    if (!blob || blob.size === 0) {
+      throw new Error('下载的文件为空或无效')
+    }
     
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
     link.download = getDisplayName(object)
+    document.body.appendChild(link)
     link.click()
+    document.body.removeChild(link)
     
     // 清理URL对象
     setTimeout(() => {
@@ -1290,7 +1326,9 @@ async function downloadObject(object: any) {
     ElMessage.success('下载成功')
   } catch (error) {
     console.error('❌ 对象存储浏览: 下载失败', error)
-    ElMessage.error('下载失败')
+    ElMessage.error(error.message || '下载失败')
+  } finally {
+    loading.value = false
   }
 }
 
@@ -1311,7 +1349,7 @@ async function handleObjectAction({ action, object }: { action: string, object: 
 async function showObjectInfo(object: any) {
   try {
     const id = route.params.id as string
-    const response = await fetch(`/api/v1/browse/object_storage/${id}/info?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
+    const response = await fetch(`/api/browse/object_storage/${id}/info?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
     selectedObjectInfo.value = await response.json()
     showInfoDialog.value = true
   } catch (error) {
@@ -1322,7 +1360,7 @@ async function showObjectInfo(object: any) {
 async function copyObjectUrl(object: any) {
   try {
     const id = route.params.id as string
-    const url = `${window.location.origin}/api/v1/browse/object_storage/${id}/download?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+    const url = `${window.location.origin}/api/browse/object_storage/${id}/download?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
     
     await navigator.clipboard.writeText(url)
     ElMessage.success('下载链接已复制到剪贴板')
@@ -1340,7 +1378,7 @@ async function deleteObject(object: any) {
     )
     
     const id = route.params.id as string
-    const response = await fetch(`/api/v1/browse/object_storage/${id}?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`, {
+    const response = await fetch(`/api/browse/object_storage/${id}?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' }
     })
@@ -1375,7 +1413,7 @@ async function deleteSelectedObjects() {
     // 循环删除每个对象
     for (const obj of selectedObjects.value) {
       try {
-        const response = await fetch(`/api/v1/browse/object_storage/${id}?bucket=${currentBucket.value}&key=${encodeURIComponent(obj.key)}`, {
+        const response = await fetch(`/api/browse/object_storage/${id}?bucket=${currentBucket.value}&key=${encodeURIComponent(obj.key)}`, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' }
         })
@@ -1419,7 +1457,7 @@ async function handleBucketAction({ action, bucket }: { action: string, bucket: 
 async function showBucketInfo(bucketName: string) {
   try {
     const id = route.params.id as string
-    const response = await fetch(`/api/v1/browse/object_storage/${id}/bucket-info?bucket=${bucketName}`)
+    const response = await fetch(`/api/browse/object_storage/${id}/bucket-info?bucket=${bucketName}`)
     selectedBucketInfo.value = await response.json()
     showBucketInfoDialog.value = true
   } catch (error) {

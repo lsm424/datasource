@@ -14,10 +14,31 @@ import './style.css'
 const app = createApp(App)
 const pinia = createPinia()
 
+// 开发环境下配置Vue警告过滤器
+if (import.meta.env.DEV) {
+  app.config.warnHandler = (msg, instance, trace) => {
+    // 过滤掉Element Plus的slot警告
+    if (msg.includes('Slot "default" invoked outside of the render function')) {
+      return
+    }
+    // 过滤掉Element Plus动画相关的警告
+    if (msg.includes('ElMenuCollapseTransition') || 
+        msg.includes('ElCollapseTransition') ||
+        msg.includes('BaseTransition')) {
+      return
+    }
+    // 其他警告正常显示
+    console.warn(`[Vue warn]: ${msg}`, instance, trace)
+  }
+}
+
 app.use(pinia)
 app.use(router)
 app.use(ElementPlus, {
   locale: zhCn,
+  // 配置以减少slot警告
+  size: 'default',
+  zIndex: 3000,
 })
 
 // 注册所有Element Plus图标

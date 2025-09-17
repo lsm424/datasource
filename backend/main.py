@@ -130,7 +130,12 @@ def create_application() -> FastAPI:
     
     # 静态文件服务（如果需要）
     if settings.SERVE_STATIC_FILES:
-        app.mount("/static", StaticFiles(directory="static"), name="static")
+        import os
+        static_dir = "static"
+        if not os.path.exists(static_dir):
+            os.makedirs(static_dir, exist_ok=True)
+            print(f"创建静态文件目录: {static_dir}")
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
     
     return app
 

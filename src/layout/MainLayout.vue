@@ -61,6 +61,7 @@
             :unique-opened="true"
             router
             class="sidebar-menu"
+            :key="menuKey"
           >
             <el-menu-item index="/dashboard">
               <el-icon><Odometer /></el-icon>
@@ -84,14 +85,14 @@
             </el-sub-menu>
 
             <!-- 数据浏览 -->
-            <el-sub-menu index="browse">
+            <el-sub-menu index="browse" v-if="availableDataSources && availableDataSources.length > 0">
               <template #title>
                 <el-icon><View /></el-icon>
                 <span>数据浏览</span>
               </template>
               <el-menu-item 
                 v-for="datasource in availableDataSources" 
-                :key="datasource.id"
+                :key="`datasource-${datasource.id}`"
                 :index="`/browse/${datasource.type}/${datasource.id}`"
               >
                 <el-icon>
@@ -171,6 +172,7 @@ const dataSourceStore = useDataSourceStore()
 // 响应式数据
 const isCollapsed = ref(false)
 const isMobile = ref(false)
+const menuKey = ref(0)
 
 // 计算属性
 const sidebarWidth = computed(() => {
@@ -251,6 +253,25 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('resize', checkIsMobile)
 })
+
+// 监听数据源变化，强制菜单重新渲染以避免slot警告
+watch(
+  () => dataSourceStore.dataSources,
+  () => {
+    menuKey.value++
+  },
+  { deep: true }
+)
+
+// 监听认证状态变化
+watch(
+  () => authStore.isAuthenticated,
+  (isAuth) => {
+    if (isAuth) {
+      menuKey.value++
+    }
+  }
+)
 </script>
 
 <style scoped>

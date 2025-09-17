@@ -248,19 +248,39 @@ export const objectStorageApi = {
 
   // 下载文件
   downloadObject: (dataSourceId: string, bucketName: string, objectName: string): Promise<Blob> => {
-    return get(`/browse/object_storage/${dataSourceId}/buckets/${bucketName}/objects/${objectName}`, {
+    return get(`/browse/object_storage/${dataSourceId}/download`, {
+      params: { bucket: bucketName, key: objectName },
       responseType: 'blob'
     })
   },
 
   // 删除对象
   deleteObject: (dataSourceId: string, bucketName: string, objectName: string): Promise<ApiResponse> => {
-    return del<ApiResponse>(`/browse/object_storage/${dataSourceId}/buckets/${bucketName}/objects/${objectName}`)
+    return del<ApiResponse>(`/browse/object_storage/${dataSourceId}`, {
+      params: { bucket: bucketName, key: objectName }
+    })
   },
 
   // 获取对象信息
   getObjectInfo: (dataSourceId: string, bucketName: string, objectName: string): Promise<ApiResponse<ObjectStorageObject>> => {
-    return get<ApiResponse<ObjectStorageObject>>(`/browse/object_storage/${dataSourceId}/buckets/${bucketName}/objects/${objectName}/info`)
+    return get<ApiResponse<ObjectStorageObject>>(`/browse/object_storage/${dataSourceId}/info`, {
+      params: { bucket: bucketName, key: objectName }
+    })
+  },
+
+  // 获取对象内容（预览）
+  getObjectContent: (dataSourceId: string, bucketName: string, objectName: string): Promise<ApiResponse<{content: string}>> => {
+    return get<ApiResponse<{content: string}>>(`/browse/object_storage/${dataSourceId}/content`, {
+      params: { bucket: bucketName, key: objectName }
+    })
+  },
+
+  // 预览对象（图片等）
+  previewObject: (dataSourceId: string, bucketName: string, objectName: string): Promise<Blob> => {
+    return get(`/browse/object_storage/${dataSourceId}/preview`, {
+      params: { bucket: bucketName, key: objectName },
+      responseType: 'blob'
+    })
   },
 
   // 测试连接

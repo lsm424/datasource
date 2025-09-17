@@ -341,11 +341,13 @@ import {
   Edit, Delete, Picture, VideoPlay, Box
 } from '@element-plus/icons-vue'
 import { useDataSourceStore } from '@/stores/datasource'
+import { useAuthStore } from '@/stores/auth'
 import { filesystemApi } from '@/api/datasource'
 
 const route = useRoute()
 const router = useRouter()
 const dataSourceStore = useDataSourceStore()
+const authStore = useAuthStore()
 
 // 响应式数据
 const loading = ref(false)
@@ -698,14 +700,14 @@ async function previewFile(file: any) {
     
     if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)) {
       previewType.value = 'image'
-      previewUrl.value = `/api/v1/browse/filesystem/${id}/preview?path=${encodeURIComponent(file.path)}`
+      previewUrl.value = `/api/browse/filesystem/${id}/preview?path=${encodeURIComponent(file.path)}`
     } else if (['txt', 'md', 'csv', 'log'].includes(ext)) {
       previewType.value = 'text'
-      const response = await fetch(`/api/v1/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`)
+      const response = await fetch(`/api/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`)
       previewContent.value = await response.text()
     } else if (ext === 'json') {
       previewType.value = 'json'
-      const response = await fetch(`/api/v1/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`)
+      const response = await fetch(`/api/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`)
       previewContent.value = await response.text()
     } else {
       previewType.value = 'unsupported'
@@ -730,17 +732,60 @@ function formatJson(jsonStr: string): string {
 
 async function downloadFile(file: any) {
   try {
+    loading.value = true
     const id = route.params.id as string
-    const url = `/api/v1/browse/filesystem/${id}/download?path=${encodeURIComponent(file.path)}`
     
+    // 使用fetch携带认证信息下载
+    if (!authStore.isAuthenticated) {
+      ElMessage.error('请先登录')
+      return
+    }
+    
+    const token = authStore.token || localStorage.getItem('auth_token')
+    if (!token) {
+      ElMessage.error('认证信息丢失，请重新登录')
+      return
+    }
+    
+    const downloadUrl = `/api/browse/filesystem/${id}/download?path=${encodeURIComponent(file.path)}`
+    
+    const response = await fetch(downloadUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    
+    if (!response.ok) {
+      throw new Error(`下载失败: ${response.status} ${response.statusText}`)
+    }
+    
+    const blob = await response.blob()
+    
+    // 验证blob有效性
+    if (!blob || blob.size === 0) {
+      throw new Error('下载的文件为空或无效')
+    }
+    
+    const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
     link.download = file.name
+    document.body.appendChild(link)
     link.click()
+    document.body.removeChild(link)
     
-    ElMessage.success('开始下载')
+    // 清理URL对象
+    setTimeout(() => {
+      window.URL.revokeObjectURL(url)
+    }, 100)
+    
+    ElMessage.success('下载成功')
   } catch (error) {
-    ElMessage.error('下载失败')
+    console.error('❌ 文件系统浏览: 下载失败', error)
+    ElMessage.error(error.message || '下载失败')
+  } finally {
+    loading.value = false
   }
 }
 
@@ -761,7 +806,7 @@ async function handleFileAction({ action, file }: { action: string, file: any })
 async function showFileInfo(file: any) {
   try {
     const id = route.params.id as string
-    const response = await fetch(`/api/v1/browse/filesystem/${id}/info?path=${encodeURIComponent(file.path)}`)
+    const response = await fetch(`/api/browse/filesystem/${id}/info?path=${encodeURIComponent(file.path)}`)
     selectedFileInfo.value = await response.json()
     showInfoDialog.value = true
   } catch (error) {
@@ -781,7 +826,7 @@ async function renameFile(file: any) {
     })
     
     const id = route.params.id as string
-    const response = await fetch(`/api/v1/browse/filesystem/${id}/rename`, {
+    const response = await fetch(`/api/browse/filesystem/${id}/rename`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -812,7 +857,7 @@ async function deleteFile(file: any) {
     )
     
     const id = route.params.id as string
-    const response = await fetch(`/api/v1/browse/filesystem/${id}/delete`, {
+    const response = await fetch(`/api/browse/filesystem/${id}/delete`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: file.path })
