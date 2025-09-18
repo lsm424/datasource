@@ -34,7 +34,6 @@ request.interceptors.request.use(
       }
     }
     
-    
     return config
   },
   (error) => {
@@ -46,7 +45,6 @@ request.interceptors.request.use(
 request.interceptors.response.use(
   (response: AxiosResponse) => {
     const { data } = response
-    
     
     // 如果是直接下载文件等场景，直接返回
     if (response.config.responseType === 'blob' || response.config.responseType === 'arraybuffer') {
@@ -73,7 +71,6 @@ request.interceptors.response.use(
     return data
   },
   async (error) => {
-    
     if (error.response) {
       const { status, data } = error.response
       
@@ -107,12 +104,19 @@ request.interceptors.response.use(
           break
         case 422:
           // 表单验证错误
-          if (data.message) {
+          if (data.details && Array.isArray(data.details)) {
+            // 显示具体的字段验证错误
+            data.details.forEach((detail: any) => {
+              ElMessage.error(`${detail.field}: ${detail.message}`)
+            })
+          } else if (data.message) {
             ElMessage.error(data.message)
           } else if (data.errors && Array.isArray(data.errors)) {
             data.errors.forEach((err: any) => {
               ElMessage.error(err.message || err.msg)
             })
+          } else {
+            ElMessage.error('表单验证失败')
           }
           break
         case 500:

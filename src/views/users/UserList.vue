@@ -269,6 +269,9 @@
             show-password
             clearable
           />
+          <div class="password-hint">
+            密码要求：至少8位，包含大写字母、小写字母和数字
+          </div>
         </el-form-item>
 
         <el-form-item>
@@ -338,7 +341,8 @@ const userForm = reactive({
   company: '',
   bio: '',
   role: 'user' as UserRole,
-  password: ''
+  password: '',
+  isActive: true
 })
 
 // 验证规则
@@ -356,7 +360,23 @@ const userRules: FormRules = {
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 8, message: '密码长度至少8位', trigger: 'blur' }
+    { min: 8, message: '密码长度至少8位', trigger: 'blur' },
+    { 
+      validator: (rule, value, callback) => {
+        if (!value) return callback()
+        if (!/[A-Z]/.test(value)) {
+          return callback(new Error('密码必须包含至少一个大写字母'))
+        }
+        if (!/[a-z]/.test(value)) {
+          return callback(new Error('密码必须包含至少一个小写字母'))
+        }
+        if (!/\d/.test(value)) {
+          return callback(new Error('密码必须包含至少一个数字'))
+        }
+        callback()
+      }, 
+      trigger: 'blur' 
+    }
   ],
   role: [
     { required: true, message: '请选择角色', trigger: 'change' }
@@ -436,7 +456,7 @@ const editUser = (user: User) => {
     bio: user.bio || '',
     role: user.role,
     password: '',
-    // 注意：创建用户时不需要发送is_active字段，后端默认为激活状态
+    isActive: user.isActive
   })
   showCreateDialog.value = true
 }
@@ -491,7 +511,6 @@ const saveUser = async () => {
           ElMessage.success('用户更新成功')
         } else {
           // 创建新用户
-          console.log('🚀 准备创建用户，发送数据:', userForm)
           await userApi.createUser(userForm)
           ElMessage.success('用户创建成功')
         }
@@ -519,7 +538,8 @@ const resetForm = () => {
     company: '',
     bio: '',
     role: 'user' as UserRole,
-    password: ''
+    password: '',
+    isActive: true
   })
   userFormRef.value?.clearValidate()
 }
@@ -583,6 +603,13 @@ document.title = '用户管理 - 数据浏览系统'
 .toolbar-right {
   display: flex;
   gap: 12px;
+}
+
+.password-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 4px;
+  line-height: 1.4;
 }
 
 .list-card {

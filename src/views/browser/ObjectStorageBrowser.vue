@@ -420,6 +420,17 @@
           <pre class="json-content"><code>{{ formatJson(previewContent) }}</code></pre>
         </div>
         
+        <!-- Excel预览 -->
+        <div v-else-if="previewType === 'excel'" class="excel-preview">
+          <div class="excel-toolbar" v-if="currentPreviewObject.excelInfo">
+            <el-tag size="small" type="success">Excel表格</el-tag>
+            <el-tag size="small">{{ currentPreviewObject.excelInfo.rows }} 行</el-tag>
+            <el-tag size="small">{{ currentPreviewObject.excelInfo.columns?.length || 0 }} 列</el-tag>
+            <el-tag size="small">{{ formatFileSize(currentPreviewObject.size || 0) }}</el-tag>
+          </div>
+          <div class="excel-content" v-html="previewContent"></div>
+        </div>
+        
         <!-- PDF预览 -->
         <div v-else-if="previewType === 'pdf'" class="pdf-preview">
           <iframe 
@@ -523,12 +534,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
-  Box, FolderOpened, Document, List, Grid, Search, Refresh, Upload,
-  ArrowLeft, Delete, View, Download, More, InfoFilled, CopyDocument,
+  Box, FolderOpened, Document, Delete, Download, InfoFilled, CopyDocument,
   Picture, VideoPlay, Lock, Folder
 } from '@element-plus/icons-vue'
 import { useDataSourceStore } from '@/stores/datasource'
@@ -557,7 +567,6 @@ const totalObjects = ref(0)
 // 新增文件系统风格的数据
 const showSidebar = ref(true)
 const directoryTree = ref([])
-const favorites = ref([])  // 收藏夹功能（可选）
 
 // 预览相关
 const showPreviewDialog = ref(false)
@@ -565,6 +574,7 @@ const currentPreviewObject = ref({})
 const previewContent = ref('')
 const previewUrl = ref('')
 const previewType = ref('')
+const previewBlobUrl = ref('') // 存储blob URL，用于媒体文件预览
 
 // 详情对话框
 const showInfoDialog = ref(false)
@@ -1029,8 +1039,7 @@ function getFileIconClass(object: any) {
 }
 
 // 保持兼容性的别名
-const getObjectIcon = getFileIcon
-const getObjectIconClass = getFileIconClass
+// 已移除未使用的函数别名
 
 function getFileType(object: any): string {
   if (object.isFolder) return '文件夹'
@@ -1176,8 +1185,9 @@ function canPreview(object: any): boolean {
   const imageExts = /\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff|ico)$/
   const videoExts = /\.(mp4|avi|mov|wmv|flv|mkv|webm|m4v)$/
   const audioExts = /\.(mp3|wav|flac|aac|ogg|m4a|wma)$/
+  const excelExts = /\.(xlsx|xls)$/
   
-  return textExts.test(key) || imageExts.test(key) || videoExts.test(key) || audioExts.test(key)
+  return textExts.test(key) || imageExts.test(key) || videoExts.test(key) || audioExts.test(key) || excelExts.test(key)
 }
 
 // 添加新的文件类型检测函数
@@ -1202,6 +1212,9 @@ function getPreviewType(object: any): string {
   if (/\.pdf$/.test(key)) {
     return 'pdf'
   }
+  if (/\.(xlsx|xls)$/.test(key)) {
+    return 'excel'
+  }
   
   return 'unsupported'
 }
@@ -1217,18 +1230,91 @@ async function previewObject(object: any) {
     
     switch (detectedType) {
       case 'image':
-        previewUrl.value = `/api/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+        try {
+          const token = authStore.token || localStorage.getItem('auth_token')
+          if (!token) {
+            ElMessage.error('请先登录')
+            previewType.value = 'unsupported'
+            break
+          }
+          
+          const imageApiUrl = `/api/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+          const response = await fetch(imageApiUrl, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+          
+          if (!response.ok) {
+            throw new Error(`图片预览失败: ${response.status} ${response.statusText}`)
+          }
+          
+          const blob = await response.blob()
+          if (!blob || blob.size === 0) {
+            throw new Error('图片文件为空或无效')
+          }
+          
+          // 清理之前的blob URL（如果存在）
+          if (previewBlobUrl.value) {
+            URL.revokeObjectURL(previewBlobUrl.value)
+          }
+          
+          // 创建新的blob URL
+          previewBlobUrl.value = URL.createObjectURL(blob)
+          previewUrl.value = previewBlobUrl.value
+          
+        } catch (error) {
+          console.error('获取图片文件失败:', error)
+          ElMessage.error(`图片预览失败: ${error.message || '未知错误'}`)
+          previewType.value = 'unsupported'
+        }
         break
         
       case 'video':
       case 'audio':
-        previewUrl.value = `/api/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+        try {
+          const token = authStore.token || localStorage.getItem('auth_token')
+          if (!token) {
+            ElMessage.error('请先登录')
+            previewType.value = 'unsupported'
+            break
+          }
+          
+          const previewApiUrl = `/api/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+          const response = await fetch(previewApiUrl, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+          
+          if (!response.ok) {
+            throw new Error(`预览失败: ${response.status} ${response.statusText}`)
+          }
+          
+          const blob = await response.blob()
+          if (!blob || blob.size === 0) {
+            throw new Error('预览文件为空或无效')
+          }
+          
+          // 清理之前的blob URL（如果存在）
+          if (previewBlobUrl.value) {
+            URL.revokeObjectURL(previewBlobUrl.value)
+          }
+          
+          // 创建新的blob URL
+          previewBlobUrl.value = URL.createObjectURL(blob)
+          previewUrl.value = previewBlobUrl.value
+          
+        } catch (error) {
+          console.error('获取媒体文件失败:', error)
+          ElMessage.error(`媒体预览失败: ${error.message || '未知错误'}`)
+          previewType.value = 'unsupported'
+        }
         break
         
       case 'text':
       case 'json':
         try {
-          const response = await fetch(`/api/browse/object_storage/${id}/content?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`)
+          const token = authStore.token || localStorage.getItem('auth_token')
+          const response = await fetch(`/api/browse/object_storage/${id}/content?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
           if (response.ok) {
             const data = await response.json()
             previewContent.value = data.content || ''
@@ -1241,9 +1327,68 @@ async function previewObject(object: any) {
           previewType.value = 'unsupported'
         }
         break
+      
+      case 'excel':
+        try {
+          const token = authStore.token || localStorage.getItem('auth_token')
+          const response = await fetch(`/api/browse/object_storage/${id}/content?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+          if (response.ok) {
+            const data = await response.json()
+            previewContent.value = data.content || ''
+            // 存储额外的Excel信息
+            currentPreviewObject.value.excelInfo = {
+              rows: data.rows,
+              columns: data.columns
+            }
+          } else {
+            throw new Error('Failed to fetch Excel content')
+          }
+        } catch (error) {
+          console.error('获取Excel内容失败:', error)
+          ElMessage.error('获取Excel文件内容失败')
+          previewType.value = 'unsupported'
+        }
+        break
         
       case 'pdf':
-        previewUrl.value = `/api/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+        try {
+          const token = authStore.token || localStorage.getItem('auth_token')
+          if (!token) {
+            ElMessage.error('请先登录')
+            previewType.value = 'unsupported'
+            break
+          }
+          
+          const pdfApiUrl = `/api/browse/object_storage/${id}/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+          const response = await fetch(pdfApiUrl, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+          
+          if (!response.ok) {
+            throw new Error(`PDF预览失败: ${response.status} ${response.statusText}`)
+          }
+          
+          const blob = await response.blob()
+          if (!blob || blob.size === 0) {
+            throw new Error('PDF文件为空或无效')
+          }
+          
+          // 清理之前的blob URL（如果存在）
+          if (previewBlobUrl.value) {
+            URL.revokeObjectURL(previewBlobUrl.value)
+          }
+          
+          // 创建新的blob URL
+          previewBlobUrl.value = URL.createObjectURL(blob)
+          previewUrl.value = previewBlobUrl.value
+          
+        } catch (error) {
+          console.error('获取PDF文件失败:', error)
+          ElMessage.error(`PDF预览失败: ${error.message || '未知错误'}`)
+          previewType.value = 'unsupported'
+        }
         break
         
       default:
@@ -1267,6 +1412,29 @@ function formatJson(jsonStr: string): string {
     return jsonStr
   }
 }
+
+// 清理blob URL的函数
+function cleanupPreviewBlobUrl() {
+  if (previewBlobUrl.value) {
+    URL.revokeObjectURL(previewBlobUrl.value)
+    previewBlobUrl.value = ''
+  }
+}
+
+// 监听预览对话框关闭，清理blob URL
+watch(showPreviewDialog, (newValue) => {
+  if (!newValue) {
+    // 延迟清理，确保对话框完全关闭
+    setTimeout(() => {
+      cleanupPreviewBlobUrl()
+    }, 100)
+  }
+})
+
+// 组件卸载时清理blob URL
+onUnmounted(() => {
+  cleanupPreviewBlobUrl()
+})
 
 async function downloadObject(object: any) {
   if (!currentBucket.value) {
@@ -1502,7 +1670,7 @@ function handleUploadError(error: any, file: any) {
 
 // 预览相关辅助方法
 function handleImageLoad() {
-  console.log('图片加载完成')
+  // 图片加载完成处理
 }
 
 function handlePreviewError(event: Event) {
@@ -1992,6 +2160,64 @@ async function copyToClipboard(text: string) {
 .json-content {
   background: #f8f9fa;
   color: #2c3e50;
+}
+
+/* Excel预览样式 */
+.excel-preview {
+  max-width: 100%;
+}
+
+.excel-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  padding: 12px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.excel-content {
+  max-height: 600px;
+  overflow: auto;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+}
+
+.excel-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  margin: 0;
+}
+
+.excel-content :deep(table th) {
+  background-color: #f5f7fa;
+  font-weight: 600;
+  color: #606266;
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 2px solid #e4e7ed;
+  border-right: 1px solid #e4e7ed;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.excel-content :deep(table td) {
+  padding: 8px 12px;
+  border-bottom: 1px solid #ebeef5;
+  border-right: 1px solid #ebeef5;
+  color: #606266;
+  vertical-align: top;
+}
+
+.excel-content :deep(table tr:nth-child(even)) {
+  background-color: #fafafa;
+}
+
+.excel-content :deep(table tr:hover) {
+  background-color: #f0f9ff;
 }
 
 /* JSON语法高亮样式 */

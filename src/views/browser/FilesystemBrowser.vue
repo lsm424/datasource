@@ -300,6 +300,17 @@
           <pre>{{ formatJson(previewContent) }}</pre>
         </div>
         
+        <!-- Excel预览 -->
+        <div v-else-if="previewType === 'excel'" class="excel-preview">
+          <div class="excel-toolbar" v-if="currentPreviewFile.excelInfo">
+            <el-tag size="small" type="success">Excel表格</el-tag>
+            <el-tag size="small">{{ currentPreviewFile.excelInfo.rows }} 行</el-tag>
+            <el-tag size="small">{{ currentPreviewFile.excelInfo.columns?.length || 0 }} 列</el-tag>
+            <el-tag size="small">{{ formatFileSize(currentPreviewFile.size || 0) }}</el-tag>
+          </div>
+          <div class="excel-content" v-html="previewContent"></div>
+        </div>
+        
         <!-- 其他类型 -->
         <div v-else class="unsupported-preview">
           <el-result
@@ -686,8 +697,9 @@ function canPreview(file: any): boolean {
   const ext = file.name.split('.').pop()?.toLowerCase()
   const textExts = ['txt', 'md', 'json', 'xml', 'csv', 'log']
   const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
+  const excelExts = ['xlsx', 'xls']
   
-  return textExts.includes(ext) || imageExts.includes(ext)
+  return textExts.includes(ext) || imageExts.includes(ext) || excelExts.includes(ext)
 }
 
 async function previewFile(file: any) {
@@ -703,12 +715,30 @@ async function previewFile(file: any) {
       previewUrl.value = `/api/browse/filesystem/${id}/preview?path=${encodeURIComponent(file.path)}`
     } else if (['txt', 'md', 'csv', 'log'].includes(ext)) {
       previewType.value = 'text'
-      const response = await fetch(`/api/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`)
-      previewContent.value = await response.text()
+      const response = await fetch(`/api/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`, {
+        headers: { 'Authorization': `Bearer ${authStore.token || localStorage.getItem('auth_token')}` }
+      })
+      const data = await response.json()
+      previewContent.value = data.content
     } else if (ext === 'json') {
       previewType.value = 'json'
-      const response = await fetch(`/api/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`)
-      previewContent.value = await response.text()
+      const response = await fetch(`/api/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`, {
+        headers: { 'Authorization': `Bearer ${authStore.token || localStorage.getItem('auth_token')}` }
+      })
+      const data = await response.json()
+      previewContent.value = data.content
+    } else if (['xlsx', 'xls'].includes(ext)) {
+      previewType.value = 'excel'
+      const response = await fetch(`/api/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`, {
+        headers: { 'Authorization': `Bearer ${authStore.token || localStorage.getItem('auth_token')}` }
+      })
+      const data = await response.json()
+      previewContent.value = data.content
+      // 存储额外的Excel信息
+      currentPreviewFile.value.excelInfo = {
+        rows: data.rows,
+        columns: data.columns
+      }
     } else {
       previewType.value = 'unsupported'
     }
@@ -1167,6 +1197,66 @@ function saveFavorites() {
   padding: 16px;
   border-radius: 4px;
   font-family: 'Courier New', monospace;
+}
+
+/* Excel预览样式 */
+.excel-preview {
+  max-width: 100%;
+}
+
+.excel-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  padding: 12px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e4e7ed;
+  border-radius: 4px 4px 0 0;
+}
+
+.excel-content {
+  max-height: 600px;
+  overflow: auto;
+  border: 1px solid #e4e7ed;
+  border-radius: 0 0 4px 4px;
+  background: white;
+}
+
+.excel-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  margin: 0;
+}
+
+.excel-content :deep(table th) {
+  background-color: #f5f7fa;
+  font-weight: 600;
+  color: #606266;
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 2px solid #e4e7ed;
+  border-right: 1px solid #e4e7ed;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.excel-content :deep(table td) {
+  padding: 8px 12px;
+  border-bottom: 1px solid #ebeef5;
+  border-right: 1px solid #ebeef5;
+  color: #606266;
+  vertical-align: top;
+}
+
+.excel-content :deep(table tr:nth-child(even)) {
+  background-color: #fafafa;
+}
+
+.excel-content :deep(table tr:hover) {
+  background-color: #f0f9ff;
 }
 
 /* 表格行样式 */

@@ -1,12 +1,15 @@
 """
 MinIO对象存储服务
 """
+import asyncio
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from minio import Minio
 from minio.error import S3Error
 from urllib3.exceptions import MaxRetryError
 import logging
+
+from app.core.async_executor import run_in_background
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,15 @@ class MinIOService:
                 }
             }
         except MaxRetryError as e:
+            error_str = str(e)
+            # 检查是否是SSL错误
+            if "SSL" in error_str and "wrong version number" in error_str:
+                ssl_suggestion = "建议检查SSL配置：如果MinIO服务器运行在HTTP模式，请将SSL设置为false"
+                return {
+                    "success": False,
+                    "message": f"SSL连接错误：可能是协议不匹配。{ssl_suggestion}",
+                    "details": {"error": str(e), "ssl_mode": self.secure}
+                }
             return {
                 "success": False,
                 "message": f"连接失败：无法连接到MinIO服务器 {self.endpoint}",
@@ -74,11 +86,27 @@ class MinIOService:
                 "details": {"code": e.code, "error": str(e)}
             }
         except Exception as e:
+            error_str = str(e)
+            # 检查是否是SSL错误
+            if "SSL" in error_str and "wrong version number" in error_str:
+                ssl_suggestion = "建议检查SSL配置：如果MinIO服务器运行在HTTP模式，请将SSL设置为false"
+                return {
+                    "success": False,
+                    "message": f"SSL连接错误：可能是协议不匹配。{ssl_suggestion}",
+                    "details": {"error": str(e), "ssl_mode": self.secure}
+                }
             return {
                 "success": False,
                 "message": f"连接测试失败：{str(e)}",
                 "details": {"error": str(e)}
             }
+    
+    async def test_connection_async(self) -> Dict[str, Any]:
+        """异步测试MinIO连接，避免阻塞主线程"""
+        return await run_in_background(
+            self.test_connection,
+            timeout=30  # 连接测试最多30秒超时
+        )
 
     def list_buckets(self) -> List[Dict[str, Any]]:
         """
@@ -216,8 +244,16 @@ class MinIOService:
             logger.error(f"列出对象失败: {e}")
             raise Exception(f"获取对象列表失败: {e.message}")
         except Exception as e:
+            error_str = str(e)
             logger.error(f"列出对象失败: {e}")
-            raise Exception(f"获取对象列表失败: {str(e)}")
+            
+            # 检查是否是SSL错误，提供更友好的错误信息
+            if "SSL" in error_str and "wrong version number" in error_str:
+                raise Exception(f"SSL连接错误：可能MinIO服务器运行在HTTP模式，但客户端尝试使用HTTPS连接。请检查SSL配置是否正确。原始错误：{str(e)}")
+            elif "MaxRetryError" in error_str and "SSL" in error_str:
+                raise Exception(f"SSL连接失败：无法与MinIO服务器建立SSL连接。请检查服务器SSL配置或将连接设置为HTTP模式。原始错误：{str(e)}")
+            else:
+                raise Exception(f"获取对象列表失败: {str(e)}")
     
     def create_bucket(self, bucket_name: str, region: Optional[str] = None) -> bool:
         """
@@ -413,3 +449,50 @@ def create_minio_service(config: Dict[str, Any]) -> MinIOService:
         secure=config.get("ssl", config.get("use_ssl", True)),
         region=config.get("region", "us-east-1")
     )
+
+def create_minio_service_with_retry(config: Dict[str, Any]) -> MinIOService:
+    """
+    根据配置创建MinIO服务实例，自动重试不同的SSL配置
+    
+    Args:
+        config: MinIO配置
+        
+    Returns:
+        MinIO服务实例
+    """
+    # 首先尝试配置中指定的SSL模式
+    ssl_modes = [config.get("ssl", config.get("use_ssl", True))]
+    
+    # 如果配置是HTTPS，也尝试HTTP作为备选
+    if ssl_modes[0]:
+        ssl_modes.append(False)
+    # 如果配置是HTTP，也尝试HTTPS作为备选
+    else:
+        ssl_modes.append(True)
+    
+    last_error = None
+    for ssl_mode in ssl_modes:
+        try:
+            service = MinIOService(
+                endpoint=config.get("endpoint", "localhost:9000"),
+                access_key=config.get("access_key", ""),
+                secret_key=config.get("secret_key", ""),
+                secure=ssl_mode,
+                region=config.get("region", "us-east-1")
+            )
+            
+            # 测试连接
+            result = service.test_connection()
+            if result["success"]:
+                if ssl_mode != config.get("ssl", config.get("use_ssl", True)):
+                    logger.warning(f"MinIO连接成功，但使用了不同的SSL模式: {ssl_mode} (配置: {config.get('ssl', config.get('use_ssl', True))})")
+                return service
+            else:
+                last_error = result["message"]
+                
+        except Exception as e:
+            last_error = str(e)
+            continue
+    
+    # 如果所有模式都失败，抛出异常
+    raise Exception(f"无法连接到MinIO服务器，已尝试不同的SSL配置。最后错误: {last_error}")

@@ -67,14 +67,25 @@ async def get_datasources(
     for ds in datasources:
         ds_data = DataSourcePublic.model_validate(ds)
         
-        # 获取最新的统计信息
+        # 获取最新的统计信息（严格按时间顺序，显示最新的数据）
         latest_stats = db.query(DataSourceStatsModel).filter(
-            DataSourceStatsModel.datasource_id == ds.id
-        ).order_by(DataSourceStatsModel.stats_date.desc()).first()
+            DataSourceStatsModel.datasource_id == ds.id,
+            DataSourceStatsModel.status == "completed"
+        ).order_by(
+            DataSourceStatsModel.stats_date.desc(),
+            DataSourceStatsModel.created_at.desc()
+        ).first()
         
         if latest_stats:
-            # 使用统计表中的数据
-            ds_data.num = latest_stats.record_count
+            # 使用统计表中的数据，根据数据源类型选择合适的字段
+            if ds.type == DataSourceType.DATABASE:
+                # 数据库：项目数 = 记录数
+                ds_data.num = latest_stats.record_count
+            else:
+                # 文件系统和对象存储：项目数 = 文件数
+                ds_data.num = latest_stats.file_count
+            
+            # 数据量统一使用数据大小
             ds_data.size = latest_stats.data_size
         else:
             # 如果没有统计信息，保持原有值（通常为0）
@@ -270,44 +281,124 @@ async def delete_datasource(
 @router.post("/test-connection", response_model=DataResponse[ConnectionTestResult])
 async def test_datasource_connection(
     connection_test: ConnectionTest,
-    current_user: User = Depends(get_current_active_user),  # 临时改为普通用户权限
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Any:
-    """测试数据源连接（仅管理员）"""
+    """测试数据源连接（异步执行，不阻塞系统）"""
+    
+    from app.core.async_executor import run_in_background
+    from app.services.minio_service import create_minio_service_with_retry
+    import time
+    
+    def _test_filesystem_connection(config_dict):
+        """在线程中测试文件系统连接（同步函数）"""
+        import os
+        path = config_dict.get('path')
+        if not path:
+            raise Exception("文件系统路径不能为空")
+        if not os.path.exists(path):
+            raise Exception(f"路径不存在: {path}")
+        if not os.path.isdir(path):
+            raise Exception(f"路径不是目录: {path}")
+        
+        # 测试读取权限
+        try:
+            os.listdir(path)
+        except PermissionError:
+            raise Exception(f"没有权限访问路径: {path}")
+        
+        return {"accessible": True, "path": path}
+    
+    def _test_database_connection(config_dict):
+        """在线程中测试数据库连接（同步函数）"""
+        db_type = config_dict.get('db_type', 'MySQL')
+        
+        if db_type == 'MySQL':
+            import pymysql
+            connection = pymysql.connect(
+                host=config_dict.get('host', 'localhost'),
+                port=config_dict.get('port', 3306),
+                user=config_dict.get('user', 'root'),
+                password=config_dict.get('password', ''),
+                database=config_dict.get('database', ''),
+                connect_timeout=10,
+                charset='utf8mb4'
+            )
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+            connection.close()
+        elif db_type == 'SQLite':
+            import sqlite3
+            db_path = config_dict.get('database', '')
+            if not db_path:
+                raise Exception("SQLite数据库文件路径不能为空")
+            connection = sqlite3.connect(db_path, timeout=10)
+            cursor = connection.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            connection.close()
+        elif db_type == 'PostgreSQL':
+            import psycopg2
+            connection = psycopg2.connect(
+                host=config_dict.get('host', 'localhost'),
+                port=config_dict.get('port', 5432),
+                user=config_dict.get('user', 'postgres'),
+                password=config_dict.get('password', ''),
+                database=config_dict.get('database', ''),
+                connect_timeout=10
+            )
+            cursor = connection.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            connection.close()
+        else:
+            raise Exception(f"不支持的数据库类型: {db_type}")
+        
+        return {"connected": True, "db_type": db_type}
+    
+    async def _test_object_storage_connection(config_dict):
+        """测试对象存储连接"""
+        service = create_minio_service_with_retry(config_dict)
+        result = await service.test_connection_async()
+        if not result["success"]:
+            raise Exception(result["message"])
+        return result["details"]
     
     try:
-        import time
         start_time = time.time()
         
-        # TODO: 实现不同类型数据源的连接测试逻辑
-        # 这里应该根据数据源类型调用相应的连接测试函数
+        # 将配置转换为字典格式
+        config_dict = connection_test.config.dict() if hasattr(connection_test.config, 'dict') else connection_test.config
         
+        # 根据数据源类型异步执行连接测试
         if connection_test.type == DataSourceType.FILESYSTEM:
-            # 测试文件系统连接
-            import os
-            config = connection_test.config
-            path = config.path if hasattr(config, 'path') else config['path']
-            if not os.path.exists(path):
-                raise Exception(f"路径不存在: {path}")
-            if not os.path.isdir(path):
-                raise Exception(f"路径不是目录: {path}")
+            details = await run_in_background(
+                _test_filesystem_connection,
+                config_dict,
+                timeout=30
+            )
         
         elif connection_test.type == DataSourceType.DATABASE:
-            # 测试数据库连接
-            # TODO: 实现数据库连接测试
-            pass
+            details = await run_in_background(
+                _test_database_connection,
+                config_dict,
+                timeout=30
+            )
         
         elif connection_test.type == DataSourceType.OBJECT_STORAGE:
-            # 测试对象存储连接
-            # TODO: 实现对象存储连接测试
-            pass
+            details = await _test_object_storage_connection(config_dict)
+        
+        else:
+            raise Exception(f"不支持的数据源类型: {connection_test.type}")
         
         duration = time.time() - start_time
         
         result = ConnectionTestResult(
             success=True,
             message="连接测试成功",
-            duration=duration
+            duration=duration,
+            details=details
         )
         
         return DataResponse(
@@ -378,8 +469,10 @@ async def run_datasource_stats(
 
 
 async def _run_single_datasource_stats_task(datasource_id: str, engine):
-    """后台执行单个数据源统计任务"""
+    """后台执行单个数据源统计任务（异步执行，不阻塞系统）"""
     from sqlalchemy.orm import sessionmaker
+    from app.services.data_stats_service import DataStatsService
+    from app.core.async_executor import async_executor
     import logging
     
     logger = logging.getLogger(__name__)
@@ -393,7 +486,7 @@ async def _run_single_datasource_stats_task(datasource_id: str, engine):
                 logger.error(f"数据源不存在: {datasource_id}")
                 return
             
-            logger.info(f"开始统计数据源: {datasource.name}")
+            logger.info(f"🚀 开始异步统计数据源: {datasource.name}")
             
             # 创建统计服务实例
             stats_service = DataStatsService(db)
@@ -401,16 +494,31 @@ async def _run_single_datasource_stats_task(datasource_id: str, engine):
             # 使用当前时间作为统计日期
             stats_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             
-            # 执行单个数据源统计
-            result = await stats_service._calculate_single_datasource(datasource, stats_date)
-            
-            if result:
-                logger.info(f"数据源统计完成: {datasource.name}")
-            else:
-                logger.error(f"数据源统计失败: {datasource.name}")
+            try:
+                # 在异步执行器中执行统计任务
+                result = await stats_service._calculate_single_datasource(datasource, stats_date)
+                
+                if result:
+                    logger.info(f"✅ 数据源统计完成: {datasource.name}")
+                else:
+                    logger.error(f"❌ 数据源统计失败: {datasource.name}")
+                    
+            except asyncio.TimeoutError:
+                logger.error(f"⏰ 数据源统计超时: {datasource.name}")
+            except Exception as stats_error:
+                logger.error(f"❌ 数据源统计异常: {datasource.name}, 错误: {stats_error}")
     
     except Exception as e:
-        logger.error(f"执行单个数据源统计任务失败: {e}")
+        logger.error(f"❌ 执行单个数据源统计任务失败: {e}")
+        
+    finally:
+        # 记录任务完成状态
+        logger.info(f"📊 数据源统计任务结束: {datasource_id}")
+        
+        # 输出当前运行任务状态（用于监控）
+        task_info = async_executor.get_running_tasks_info()
+        if task_info["running_tasks"]:
+            logger.info(f"📈 当前运行中的统计任务: {len(task_info['running_tasks'])} 个")
 
 
 @router.get("/{datasource_id}/stats", response_model=DataResponse[dict])
@@ -430,10 +538,14 @@ async def get_datasource_stats(
             detail="数据源不存在"
         )
     
-    # 获取该数据源的统计记录
+    # 获取该数据源的已完成统计记录（按时间倒序）
     stats_records = db.query(DataSourceStatsModel).filter(
-        DataSourceStatsModel.datasource_id == datasource_id
-    ).order_by(DataSourceStatsModel.stats_date.desc()).limit(limit).all()
+        DataSourceStatsModel.datasource_id == datasource_id,
+        DataSourceStatsModel.status == "completed"
+    ).order_by(
+        DataSourceStatsModel.stats_date.desc(),
+        DataSourceStatsModel.created_at.desc()
+    ).limit(limit).all()
     
     # 转换为字典格式
     stats_history = []

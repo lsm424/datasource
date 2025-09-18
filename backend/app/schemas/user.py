@@ -20,6 +20,7 @@ class UserCreate(UserBase):
     """创建用户模型"""
     password: str = Field(..., min_length=8, max_length=100, description="密码")
     role: Optional[UserRole] = Field(UserRole.USER, description="用户角色")
+    is_active: Optional[bool] = Field(True, alias="isActive", description="是否激活")
     
     @validator('password')
     def validate_password(cls, v):
@@ -75,12 +76,16 @@ class UserPublic(UserBase):
     """公开用户信息模型"""
     id: str = Field(..., description="用户ID")
     role: UserRole = Field(..., description="用户角色")
-    is_active: bool = Field(..., description="是否激活")
+    is_active: bool = Field(..., alias="isActive", description="是否激活")
+    is_verified: bool = Field(False, alias="isVerified", description="是否已验证邮箱")
     avatar: Optional[str] = Field(None, description="头像URL")
-    created_at: datetime = Field(..., description="创建时间")
+    created_at: datetime = Field(..., alias="createdAt", description="创建时间")
+    updated_at: datetime = Field(..., alias="updatedAt", description="更新时间")
+    last_login_at: Optional[datetime] = Field(None, alias="lastLoginAt", description="最后登录时间")
     
     class Config:
         from_attributes = True
+        populate_by_name = True
 
 
 class UserLogin(BaseModel):

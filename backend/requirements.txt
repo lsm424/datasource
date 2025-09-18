@@ -27,6 +27,10 @@ minio==7.2.0
 aiofiles==23.2.1
 python-magic==0.4.27
 
+# Excel文件处理
+pandas>=1.4.0
+openpyxl>=3.0.0
+
 # 工具库
 python-dotenv==1.0.0
 email-validator==2.1.0
@@ -44,8 +48,10 @@ isort==5.12.0
 flake8==6.1.0
 mypy==1.7.1
 
-# 系统监控
+# 系统监控和性能分析
 psutil==5.9.6
 
 # 定时任务调度
 APScheduler==3.10.4
+
+xlrd==2.0.2

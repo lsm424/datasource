@@ -1,6 +1,7 @@
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
+import logging
 
 from app.core.database import get_db
 from app.core.deps import get_current_active_user, get_current_admin_user
@@ -57,7 +58,7 @@ async def get_users(
     users = query.offset((page - 1) * limit).limit(limit).all()
     
     # 转换为响应模型
-    user_list = [UserPublic.model_validate(user) for user in users]
+    user_list = [UserPublic.model_validate(user).model_dump(by_alias=True) for user in users]
     
     return ListResponse.create(
         data=user_list,
@@ -133,7 +134,7 @@ async def get_user_by_id(
     user_data = UserPublic.model_validate(user)
     
     return DataResponse(
-        data=user_data,
+        data=user_data.model_dump(by_alias=True),
         message="获取用户信息成功"
     )
 
@@ -145,16 +146,6 @@ async def create_user(
     db: Session = Depends(get_db)
 ) -> Any:
     """创建用户（仅管理员）"""
-    
-    print(f"🔍 开始创建用户: {user_create.username}")
-    print(f"🔍 用户数据字段:")
-    print(f"  - username: {user_create.username}")
-    print(f"  - email: {user_create.email}")
-    print(f"  - name: {user_create.name}")
-    print(f"  - phone: {user_create.phone}")
-    print(f"  - company: {user_create.company}")
-    print(f"  - bio: {user_create.bio}")
-    print(f"  - role: {user_create.role} (type: {type(user_create.role)})")
     
     logging.info(f"Creating user: {user_create.username} ({user_create.email})")
     
@@ -185,7 +176,7 @@ async def create_user(
     user_response = UserPublic.model_validate(new_user)
     
     return DataResponse(
-        data=user_response,
+        data=user_response.model_dump(by_alias=True),
         message="用户创建成功"
     )
 
@@ -228,7 +219,7 @@ async def update_user(
     user_data = UserPublic.model_validate(user)
     
     return DataResponse(
-        data=user_data,
+        data=user_data.model_dump(by_alias=True),
         message="用户信息更新成功"
     )
 

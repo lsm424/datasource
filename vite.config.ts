@@ -61,7 +61,7 @@ export default defineConfig({
         // 增加代理超时时间
         timeout: 30000,
         configure: (proxy, options) => {
-          console.log('🔄 Vite代理配置:', options)
+          // 代理配置
         }
       },
     },

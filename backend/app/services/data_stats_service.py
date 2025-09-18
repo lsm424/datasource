@@ -15,7 +15,8 @@ from app.core.database import get_db
 from app.models.datasource import DataSource, DataSourceType
 from app.models.data_stats import DataSourceStats, DailyStats, StatsTask
 from app.schemas.base import DataResponse
-from app.services.minio_service import create_minio_service
+from app.services.minio_service import create_minio_service, create_minio_service_with_retry
+from app.core.async_executor import async_task, run_in_background
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +25,9 @@ class DataSizeCalculator:
     """数据源大小计算器"""
     
     @staticmethod
-    async def calculate_filesystem_size(config: Dict[str, Any]) -> Tuple[int, int, int]:
-        """计算文件系统数据源大小
+    def _sync_calculate_filesystem_size(config: Dict[str, Any]) -> Tuple[int, int, int]:
+        """
+        同步计算文件系统数据源大小（在线程中运行）
         返回: (数据大小bytes, 文件数量, 数据条数)
         """
         try:
@@ -107,6 +109,18 @@ class DataSizeCalculator:
         except Exception as e:
             logger.error(f"计算文件系统大小失败: {e}")
             return 0, 0, 0
+    
+    @staticmethod
+    async def calculate_filesystem_size(config: Dict[str, Any]) -> Tuple[int, int, int]:
+        """
+        异步计算文件系统数据源大小
+        将同步I/O操作转到线程池中执行，避免阻塞主线程
+        """
+        return await run_in_background(
+            DataSizeCalculator._sync_calculate_filesystem_size, 
+            config, 
+            timeout=600  # 文件系统遍历可能需要更长时间
+        )
     
     @staticmethod
     async def calculate_database_size(config: Dict[str, Any]) -> Tuple[int, int, int]:
@@ -275,8 +289,8 @@ class DataSizeCalculator:
             return 0, 0, 0
     
     @staticmethod
-    async def _calculate_s3_size(config: Dict[str, Any]) -> Tuple[int, int, int]:
-        """计算S3兼容存储(MinIO)大小"""
+    def _sync_calculate_s3_size(config: Dict[str, Any]) -> Tuple[int, int, int]:
+        """同步计算S3兼容存储(MinIO)大小（在线程中运行）"""
         try:
             logger.info("开始统计MinIO对象存储数据")
             
@@ -284,8 +298,8 @@ class DataSizeCalculator:
             if isinstance(config, str):
                 config = json.loads(config)
             
-            # 创建MinIO服务实例
-            minio_service = create_minio_service(config)
+            # 创建MinIO服务实例，自动重试不同SSL配置
+            minio_service = create_minio_service_with_retry(config)
             
             total_size = 0
             total_files = 0
@@ -340,6 +354,15 @@ class DataSizeCalculator:
         except Exception as e:
             logger.error(f"MinIO统计失败: {e}")
             return 0, 0, 0
+    
+    @staticmethod
+    async def _calculate_s3_size(config: Dict[str, Any]) -> Tuple[int, int, int]:
+        """异步计算S3兼容存储(MinIO)大小"""
+        return await run_in_background(
+            DataSizeCalculator._sync_calculate_s3_size,
+            config,
+            timeout=900  # MinIO统计可能需要更长时间
+        )
     
     @staticmethod
     async def _calculate_oss_size(config: Dict[str, Any]) -> Tuple[int, int, int]:
@@ -458,9 +481,28 @@ class DataStatsService:
             )
             
             self.db.add(stats)
+            
+            # 同时更新数据源表的统计字段，以便前端数据源列表能显示最新数据
+            datasource.size = data_size
+            
+            # 根据数据源类型选择合适的项目数字段
+            if datasource.type.value == "database":
+                # 数据库：项目数 = 记录数
+                datasource.num = record_count
+            else:
+                # 文件系统和对象存储：项目数 = 文件数
+                datasource.num = file_count
+            
+            datasource.updated_at = datetime.now()
+            
             self.db.commit()
             
             logger.info(f"数据源统计完成: {datasource.name}, 大小={data_size}, 文件数={file_count}, 记录数={record_count}")
+            
+            # 记录更新的具体值
+            num_value = record_count if datasource.type.value == "database" else file_count
+            num_meaning = "记录数" if datasource.type.value == "database" else "文件数"
+            logger.info(f"已更新数据源表字段: size={data_size}, num={num_value} ({num_meaning})")
             return stats
             
         except Exception as e:

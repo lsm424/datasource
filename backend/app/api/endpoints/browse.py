@@ -27,7 +27,7 @@ from app.schemas.minio import (
     UploadResult,
     MinIOConnectionTest
 )
-from app.services.minio_service import create_minio_service
+from app.services.minio_service import create_minio_service, create_minio_service_with_retry
 
 router = APIRouter()
 
@@ -484,6 +484,186 @@ async def download_file(
         )
 
 
+@router.get("/filesystem/{datasource_id}/content")
+async def get_file_content(
+    datasource_id: str,
+    path: str = Query(..., description="文件路径"),
+    encoding: str = Query("utf-8", description="文本编码"),
+    max_size: int = Query(1024*1024, description="最大读取大小(字节)"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> Any:
+    """获取文件文本内容（用于文件预览）"""
+    
+    # 验证数据源
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.FILESYSTEM
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文件系统数据源不存在"
+        )
+    
+    try:
+        import os
+        
+        # 解析配置
+        config = parse_datasource_config(datasource.config)
+        base_path = os.path.normpath(config["path"])
+        
+        # 处理路径
+        if path == "/" or path == "":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="路径不能为空"
+            )
+        
+        relative_path = path.lstrip("/").replace("/", os.sep)
+        full_path = os.path.join(base_path, relative_path)
+        full_path = os.path.normpath(full_path)
+        
+        # 安全检查
+        try:
+            common_path = os.path.commonpath([base_path, full_path])
+            if common_path != base_path:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="非法路径"
+                )
+        except ValueError:
+            if not full_path.startswith(base_path):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="非法路径"
+                )
+        
+        # 检查文件是否存在
+        if not os.path.exists(full_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"文件不存在: {path}"
+            )
+        
+        if os.path.isdir(full_path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="指定路径是目录，无法读取内容"
+            )
+        
+        # 检查文件大小
+        file_size = os.path.getsize(full_path)
+        if file_size > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"文件太大，无法预览。最大支持 {max_size/1024/1024:.1f}MB"
+            )
+        
+        # 检查文件扩展名，决定处理方式
+        ext = os.path.splitext(full_path)[1].lower()
+        
+        if ext in ['.xlsx', '.xls']:
+            # 处理Excel文件
+            try:
+                import pandas as pd
+                # 根据文件扩展名选择合适的引擎
+                if ext == '.xlsx':
+                    engine = 'openpyxl'
+                elif ext == '.xls':
+                    engine = 'xlrd'
+                else:
+                    engine = None
+                
+                # 读取Excel文件的第一个工作表
+                df = pd.read_excel(full_path, nrows=1000, engine=engine)  # 限制行数防止内存问题
+                # 转换为HTML表格
+                html_content = df.to_html(classes="table table-striped", escape=False, index=False)
+                return {
+                    "content": html_content, 
+                    "content_type": "html",
+                    "encoding": "utf-8", 
+                    "size": file_size,
+                    "rows": len(df),
+                    "columns": list(df.columns)
+                }
+            except ImportError as e:
+                missing_lib = "openpyxl" if ext == '.xlsx' else "xlrd" if ext == '.xls' else "pandas"
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=f"Excel文件预览需要安装{missing_lib}库: {str(e)}"
+                )
+            except Exception as e:
+                logging.error(f"读取Excel文件失败 {full_path}: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"无法解析Excel文件: {str(e)}"
+                )
+        else:
+            # 处理文本文件
+            try:
+                with open(full_path, 'rb') as f:
+                    content_bytes = f.read()
+                
+                # 尝试解码为文本
+                try:
+                    content_text = content_bytes.decode(encoding)
+                    return {
+                        "content": content_text, 
+                        "content_type": "text",
+                        "encoding": encoding, 
+                        "size": file_size
+                    }
+                except UnicodeDecodeError:
+                    # 尝试其他编码
+                    for fallback_encoding in ['gbk', 'latin1', 'ascii']:
+                        try:
+                            content_text = content_bytes.decode(fallback_encoding)
+                            return {
+                                "content": content_text, 
+                                "content_type": "text",
+                                "encoding": fallback_encoding, 
+                                "size": file_size
+                            }
+                        except UnicodeDecodeError:
+                            continue
+                    
+                    # 如果所有编码都失败
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="无法解码文件内容，可能不是文本文件"
+                    )
+                    
+            except (OSError, IOError, PermissionError) as e:
+                logging.error(f"文件读取错误: {full_path}, 错误: {e}")
+                error_code = getattr(e, 'winerror', None) or getattr(e, 'errno', None)
+                if error_code in [33, 32]:
+                    raise HTTPException(
+                        status_code=status.HTTP_423_LOCKED,
+                        detail=f"文件被其他程序锁定，无法读取: {path}"
+                    )
+                elif error_code == 13:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"没有权限访问文件: {path}"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"文件读取失败: {str(e)}"
+                    )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"获取文件内容失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取文件内容失败: {str(e)}"
+        )
+
+
 @router.get("/database/{datasource_id}/tables", response_model=DataResponse[List[DatabaseTable]])
 async def list_database_tables(
     datasource_id: str,
@@ -675,9 +855,9 @@ async def create_bucket(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 创建存储桶
         success = minio_service.create_bucket(request.name, request.region)
@@ -726,9 +906,9 @@ async def delete_bucket(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 删除存储桶
         success = minio_service.delete_bucket(bucket_name)
@@ -774,9 +954,9 @@ async def list_objects(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 获取对象列表
         objects = minio_service.list_objects(bucket_name, prefix, delimiter, max_keys)
@@ -821,9 +1001,9 @@ async def upload_object(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 上传文件
         file_content = await file.read()
@@ -880,9 +1060,9 @@ async def download_object(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 获取对象信息
         obj_info = minio_service.get_object_info(bucket, key)
@@ -938,9 +1118,9 @@ async def delete_object(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 删除对象
         success = minio_service.delete_object(bucket, key)
@@ -984,9 +1164,9 @@ async def get_object_info(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 获取对象信息
         obj_info = minio_service.get_object_info(bucket, key)
@@ -1036,9 +1216,9 @@ async def preview_object(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 获取对象信息
         obj_info = minio_service.get_object_info(bucket, key)
@@ -1100,9 +1280,9 @@ async def get_object_content(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 获取对象信息
         obj_info = minio_service.get_object_info(bucket, key)
@@ -1118,24 +1298,80 @@ async def get_object_content(
         response = minio_service.download_object(bucket, key)
         content_bytes = response.data
         
-        try:
-            # 尝试解码为文本
-            content_text = content_bytes.decode(encoding)
-            return {"content": content_text, "encoding": encoding, "size": len(content_bytes)}
-        except UnicodeDecodeError:
-            # 如果无法解码，尝试其他编码
-            for fallback_encoding in ['gbk', 'latin1', 'ascii']:
-                try:
-                    content_text = content_bytes.decode(fallback_encoding)
-                    return {"content": content_text, "encoding": fallback_encoding, "size": len(content_bytes)}
-                except UnicodeDecodeError:
-                    continue
-            
-            # 如果所有编码都失败，返回错误
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="无法解码文件内容，可能不是文本文件"
-            )
+        # 检查文件扩展名，决定处理方式
+        import os
+        ext = os.path.splitext(key)[1].lower()
+        
+        if ext in ['.xlsx', '.xls']:
+            # 处理Excel文件
+            try:
+                import pandas as pd
+                import io
+                
+                # 根据文件扩展名选择合适的引擎
+                if ext == '.xlsx':
+                    engine = 'openpyxl'
+                elif ext == '.xls':
+                    engine = 'xlrd'
+                else:
+                    engine = None
+                
+                # 使用BytesIO将字节流转换为文件对象
+                excel_file = io.BytesIO(content_bytes)
+                # 读取Excel文件的第一个工作表
+                df = pd.read_excel(excel_file, nrows=1000, engine=engine)  # 限制行数防止内存问题
+                # 转换为HTML表格
+                html_content = df.to_html(classes="table table-striped", escape=False, index=False)
+                return {
+                    "content": html_content, 
+                    "content_type": "html",
+                    "encoding": "utf-8", 
+                    "size": len(content_bytes),
+                    "rows": len(df),
+                    "columns": list(df.columns)
+                }
+            except ImportError as e:
+                missing_lib = "openpyxl" if ext == '.xlsx' else "xlrd" if ext == '.xls' else "pandas"
+                raise HTTPException(
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    detail=f"Excel文件预览需要安装{missing_lib}库: {str(e)}"
+                )
+            except Exception as e:
+                logging.error(f"读取Excel对象失败 {key}: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"无法解析Excel文件: {str(e)}"
+                )
+        else:
+            # 处理文本文件
+            try:
+                # 尝试解码为文本
+                content_text = content_bytes.decode(encoding)
+                return {
+                    "content": content_text, 
+                    "content_type": "text",
+                    "encoding": encoding, 
+                    "size": len(content_bytes)
+                }
+            except UnicodeDecodeError:
+                # 如果无法解码，尝试其他编码
+                for fallback_encoding in ['gbk', 'latin1', 'ascii']:
+                    try:
+                        content_text = content_bytes.decode(fallback_encoding)
+                        return {
+                            "content": content_text, 
+                            "content_type": "text",
+                            "encoding": fallback_encoding, 
+                            "size": len(content_bytes)
+                        }
+                    except UnicodeDecodeError:
+                        continue
+                
+                # 如果所有编码都失败，返回错误
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="无法解码文件内容，可能不是文本文件"
+                )
         
     except HTTPException:
         raise
@@ -1168,9 +1404,9 @@ async def test_minio_connection(
         )
     
     try:
-        # 创建MinIO服务实例
+        # 创建MinIO服务实例，自动重试不同SSL配置
         config = parse_datasource_config(datasource.config)
-        minio_service = create_minio_service(config)
+        minio_service = create_minio_service_with_retry(config)
         
         # 测试连接
         result = minio_service.test_connection()

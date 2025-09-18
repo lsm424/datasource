@@ -3,6 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 import asyncio
+import logging
 from typing import AsyncGenerator
 
 from app.core.config import settings
@@ -73,7 +74,7 @@ def create_database():
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
             conn = sqlite3.connect(db_path)
             conn.close()
-            print(f"Created SQLite database: {db_path}")
+            logging.info(f"Created SQLite database: {db_path}")
 
 
 async def create_tables():
@@ -86,13 +87,13 @@ async def create_tables():
     
     # 创建所有表
     Base.metadata.create_all(bind=engine)
-    print("Database tables created successfully")
+    logging.info("Database tables created successfully")
 
 
 def drop_tables():
     """删除所有表（谨慎使用）"""
     Base.metadata.drop_all(bind=engine)
-    print("All database tables dropped")
+    logging.info("All database tables dropped")
 
 
 def get_engine():
@@ -114,5 +115,5 @@ def check_database_connection() -> bool:
             conn.execute(text("SELECT 1"))
         return True
     except Exception as e:
-        print(f"Database connection failed: {e}")
+        logging.error(f"Database connection failed: {e}")
         return False

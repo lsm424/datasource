@@ -35,10 +35,14 @@ async def get_dashboard_stats(
     if active_datasources:
         # 为每个数据源获取最新的统计数据
         for ds in active_datasources:
-            # 优先使用最新的 DataSourceStats
+            # 优先使用最新的已完成统计数据
             latest_ds_stats = db.query(DataSourceStats).filter(
-                DataSourceStats.datasource_id == ds.id
-            ).order_by(desc(DataSourceStats.stats_date)).first()
+                DataSourceStats.datasource_id == ds.id,
+                DataSourceStats.status == "completed"
+            ).order_by(
+                desc(DataSourceStats.stats_date),
+                desc(DataSourceStats.created_at)
+            ).first()
             
             if latest_ds_stats:
                 total_data_size += latest_ds_stats.data_size or 0
@@ -169,10 +173,14 @@ async def get_datasource_distribution(
     latest_update = None
     
     for ds in active_datasources:
-        # 获取该数据源的最新统计数据
+        # 获取该数据源的最新已完成统计数据
         latest_ds_stats = db.query(DataSourceStats).filter(
-            DataSourceStats.datasource_id == ds.id
-        ).order_by(desc(DataSourceStats.stats_date)).first()
+            DataSourceStats.datasource_id == ds.id,
+            DataSourceStats.status == "completed"
+        ).order_by(
+            desc(DataSourceStats.stats_date),
+            desc(DataSourceStats.created_at)
+        ).first()
         
         if latest_ds_stats:
             data_size = latest_ds_stats.data_size or 0

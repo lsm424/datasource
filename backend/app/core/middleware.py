@@ -26,7 +26,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         client_ip = self.get_client_ip(request)
         user_agent = request.headers.get("user-agent", "")
         
-        print(f"[{request_id}] {request.method} {request.url.path} - IP: {client_ip}")
+        # 记录请求信息到日志
         
         response = await call_next(request)
         
@@ -37,8 +37,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Process-Time"] = str(process_time)
         
-        # 记录响应信息
-        print(f"[{request_id}] Response: {response.status_code} - Time: {process_time:.3f}s")
+        # 记录响应信息到日志
         
         return response
     
