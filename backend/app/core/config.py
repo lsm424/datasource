@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     API_KEY_ENABLED: bool = Field(default=True, env="API_KEY_ENABLED")
     API_KEY_EXPIRY_DAYS: int = Field(default=365, env="API_KEY_EXPIRY_DAYS")
     
+    # 前端地址（用于生成 all-data 等接口返回的浏览链接）
+    FRONTEND_HOST: str = Field(default="localhost", env="FRONTEND_HOST")
+    FRONTEND_PORT: int = Field(default=5173, env="FRONTEND_PORT")
+
     # 开发配置
     RELOAD: bool = Field(default=False, env="RELOAD")
     

@@ -13,6 +13,7 @@ import logging
 from datetime import datetime
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.deps import get_current_active_user, get_token_from_request
 from app.models.user import User
 from app.models.datasource import DataSource, DataSourceType
@@ -28,6 +29,9 @@ from app.services.minio_service import create_minio_service_with_retry
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# 前端地址，用于生成 all-data 返回的浏览链接（来自 .env FRONTEND_HOST / FRONTEND_PORT）
+_FRONTEND_BASE = f"http://{settings.FRONTEND_HOST}:{settings.FRONTEND_PORT}"
 
 
 def _collect_filesystem_recursive(
@@ -75,7 +79,7 @@ def _collect_filesystem_recursive(
                 try:
                     stat = os.stat(file_path)
                     item_path = (rel_root + f).replace("\\", "/")
-                    url = f'http://localhost:5173/browse/filesystem/{datasource_id}/?path=/{quote(item_path, safe="/")}'
+                    url = f'{_FRONTEND_BASE}/browse/filesystem/{datasource_id}/?path=/{quote(item_path, safe="/")}'
                     if access_token:
                         url += f'&token={quote(access_token, safe="")}'
                     items.append({
@@ -140,7 +144,7 @@ def _collect_object_storage_all(
                 key = obj.object_name
                 if not key or (getattr(obj, "size", None) == 0 and key.rstrip("/").find("/") == -1 and key.endswith("/")):
                     continue
-                url = f'http://localhost:5173/browse/object_storage/{datasource_id}?bucket={bucket_name}&prefix={key}'
+                url = f'{_FRONTEND_BASE}/browse/object_storage/{datasource_id}?bucket={bucket_name}&prefix={key}'
                 if access_token:
                     url += f'&token={quote(access_token, safe="")}'
                 objects.append({
@@ -186,7 +190,7 @@ def _collect_database_all(datasource: DataSource, datasource_id: str, access_tok
                 "name": name,
                 "comment": comment,
                 "row_count": row_count,
-                'url': f'http://localhost:5173/browse/database/{datasource_id}?table={name}&&token={quote(access_token, safe="")}',
+                'url': f'{_FRONTEND_BASE}/browse/database/{datasource_id}?table={name}' + (f'&token={quote(access_token, safe="")}' if access_token else ''),
             })
         return result
     finally:
