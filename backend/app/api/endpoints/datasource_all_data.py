@@ -23,8 +23,6 @@ from app.api.endpoints.browse import (
     parse_datasource_config,
     create_mysql_connection,
     get_mysql_tables,
-    get_mysql_table_schema,
-    get_mysql_table_data,
 )
 from app.services.minio_service import create_minio_service_with_retry
 
@@ -164,8 +162,11 @@ def _collect_object_storage_all(
     return result
 
 
-def _collect_database_all(datasource: DataSource, max_rows_per_table: int = 10000) -> List[Dict[str, Any]]:
-    """获取数据库所有表、表结构及每张表的数据（分页拉满直到达到 max_rows_per_table）。"""
+def _collect_database_all(datasource: DataSource, datasource_id: str, access_token: Optional[str] = None,
+    max_rows_per_table: int = 10000) -> List[Dict[str, Any]]:
+    """
+    获取数据库所有表的基本信息列表：表名称、comment、数据条数。
+    """
     db_config = datasource.config
     if not db_config or db_config.get("db_type") != "MySQL":
         return []
@@ -176,55 +177,17 @@ def _collect_database_all(datasource: DataSource, max_rows_per_table: int = 1000
         tables = get_mysql_tables(connection)
         result = []
         for tbl in tables:
-            table_name = tbl.name if hasattr(tbl, "name") else tbl.get("name")
-            try:
-                columns = get_mysql_table_schema(connection, table_name)
-                columns_data = [
-                    {
-                        "name": c.name,
-                        "type": c.type,
-                        "nullable": c.nullable,
-                        "default_value": c.default_value,
-                        "comment": c.comment,
-                        "is_primary_key": c.is_primary_key,
-                        "is_auto_increment": c.is_auto_increment,
-                    }
-                    for c in columns
-                ]
-                all_rows = []
-                page = 1
-                limit = 1000
-                while True:
-                    r = get_mysql_table_data(connection, table_name, page=page, limit=limit)
-                    rows = r.get("data", [])
-                    total = r.get("total", 0)
-                    all_rows.extend(rows)
-                    if len(rows) < limit or len(all_rows) >= max_rows_per_table:
-                        break
-                    page += 1
-                    if len(all_rows) >= max_rows_per_table:
-                        break
-                result.append({
-                    "table": {
-                        "name": table_name,
-                        "schema": getattr(tbl, "schema", None),
-                        "row_count": total,
-                        "comment": getattr(tbl, "comment", None),
-                    },
-                    "columns": columns_data,
-                    "data": {
-                        "rows": all_rows[:max_rows_per_table],
-                        "total": min(total, max_rows_per_table),
-                        "returned": len(all_rows[:max_rows_per_table]),
-                    },
-                })
-            except Exception as e:
-                logger.warning(f"table {table_name} error: {e}")
-                result.append({
-                    "table": {"name": table_name, "schema": None, "row_count": 0, "comment": None},
-                    "columns": [],
-                    "data": {"rows": [], "total": 0, "returned": 0, "error": str(e)},
-                })
+            name = tbl.name if hasattr(tbl, "name") else tbl.get("name")
+            row_count = getattr(tbl, "row_count", None) or tbl.get("row_count")
+            comment = getattr(tbl, "comment", None) or tbl.get("comment")
+            if row_count is None:
+                row_count = 0
+            result.append({
+                "name": name,
+                "comment": comment,
+                "row_count": row_count,
+                'url': f'http://localhost:5173/browse/database/{datasource_id}?table={name}&&token={quote(access_token, safe="")}',
+            })
         return result
     finally:
         if connection:
@@ -314,7 +277,7 @@ async def get_datasource_all_data(
 
     elif datasource.type == DataSourceType.DATABASE:
         try:
-            tables_with_data = _collect_database_all(datasource, max_rows_per_table=max_rows_per_table)
+            tables_with_data = _collect_database_all(datasource, datasource_id, access_token, max_rows_per_table=max_rows_per_table)
             payload["data"] = {
                 "tables": tables_with_data,
                 "total_tables": len(tables_with_data),

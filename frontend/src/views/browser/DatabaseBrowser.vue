@@ -317,7 +317,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Coin, Grid, Document, Key, Search } from '@element-plus/icons-vue'
 import { useDataSourceStore } from '@/stores/datasource'
@@ -325,6 +325,7 @@ import { useAuthStore } from '@/stores/auth'
 import { databaseApi } from '@/api/datasource'
 
 const route = useRoute()
+const router = useRouter()
 const dataSourceStore = useDataSourceStore()
 const authStore = useAuthStore()
 
@@ -354,10 +355,27 @@ const hasWritePermission = computed(() => {
   return authStore.user?.role === 'admin' || true
 })
 
+// 根据 URL table 参数打开指定表的数据页
+async function openTableFromQuery(tableName: string) {
+  if (!tableName || typeof tableName !== 'string') return
+  const name = tableName.trim()
+  if (!name) return
+  currentTable.value = name
+  showSchema.value = false
+  await Promise.all([
+    loadTableSchema(),
+    loadTableData()
+  ])
+}
+
 // 生命周期
 onMounted(async () => {
   await loadDataSource()
   await loadDatabaseStructure()
+  const tableFromQuery = route.query.table as string
+  if (tableFromQuery) {
+    await openTableFromQuery(tableFromQuery)
+  }
 })
 
 // 监听路由变化
@@ -365,6 +383,18 @@ watch(() => route.params.id, async (newId) => {
   if (newId) {
     await loadDataSource()
     await loadDatabaseStructure()
+    const tableFromQuery = route.query.table as string
+    if (tableFromQuery) {
+      await openTableFromQuery(tableFromQuery)
+    }
+  }
+})
+
+// 监听 URL table 参数变化，自动打开对应表数据页
+watch(() => route.query.table, async (newTable) => {
+  const name = newTable && typeof newTable === 'string' ? newTable.trim() : ''
+  if (name && currentTable.value !== name) {
+    await openTableFromQuery(name)
   }
 })
 
@@ -465,6 +495,10 @@ async function handleNodeClick(data: any) {
   if (data.type === 'table') {
     currentTable.value = data.name
     showSchema.value = false
+    router.replace({
+      path: route.path,
+      query: { ...route.query, table: data.name }
+    })
     await Promise.all([
       loadTableSchema(),
       loadTableData()
