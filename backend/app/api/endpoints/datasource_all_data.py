@@ -112,58 +112,77 @@ def _collect_filesystem_recursive(
 
 def _collect_object_storage_all(
     minio_service,
-    datasource_id,
+    datasource_id: str,
     access_token: Optional[str] = None,
     max_objects_per_bucket: int = 50000,
     config: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
-    """列出桶并递归收集对象，返回 [{ bucket_name, objects }]。
-    若 config 中指定了 bucket，则只读取该指定桶；否则读取所有桶。"""
+    offset: int = 0,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """按页列举对象存储：流式遍历，跳过 offset 个后只收集 limit 个，不全量加载。
+    若 config 中指定了 bucket，则只读取该指定桶；否则读取所有桶。
+    返回 {"items": [...], "total": int|None, "has_more": bool}。当本页取满 limit 时 total 为 None（无法得知总数）。"""
     if config and config.get("bucket"):
         buckets_to_list = [{"name": config["bucket"]}]
     else:
         buckets_to_list = minio_service.list_buckets()
-    result = []
+
+    remaining_skip = max(0, offset)
+    remaining_take = max(0, limit)
+    items: List[Dict[str, Any]] = []
+    bucket_count = 0
+
     for bucket in buckets_to_list:
         bucket_name = bucket.get("name") if isinstance(bucket, dict) else getattr(bucket, "name", None)
         if not bucket_name:
             continue
-        objects = []
+        bucket_count += 1
         try:
             it = minio_service.client.list_objects(
                 bucket_name=bucket_name,
                 prefix="",
                 recursive=True,
             )
-            count = 0
+            bucket_seen = 0
             for obj in it:
-                if count >= max_objects_per_bucket:
+                if bucket_seen >= max_objects_per_bucket:
                     logger.warning(f"bucket {bucket_name} 达到单桶上限 {max_objects_per_bucket}，已截断")
                     break
-                # 跳过“目录”占位对象（size=0 且 key 以 / 结尾的常见约定，或仅作前缀的 key）
                 key = obj.object_name
                 if not key or (getattr(obj, "size", None) == 0 and key.rstrip("/").find("/") == -1 and key.endswith("/")):
                     continue
+                bucket_seen += 1
+
+                if remaining_skip > 0:
+                    remaining_skip -= 1
+                    continue
+                if remaining_take <= 0:
+                    return {
+                        "items": items,
+                        "total": None,
+                        "has_more": True,
+                        "total_buckets": len(buckets_to_list),
+                    }
                 url = f'{_FRONTEND_BASE}/browse/object_storage/{datasource_id}?bucket={bucket_name}&prefix={key}'
                 if access_token:
                     url += f'&token={quote(access_token, safe="")}'
-                objects.append({
+                items.append({
+                    "bucket_name": bucket_name,
                     "key": key,
                     "url": url,
-                    # "size": getattr(obj, "size", None) or 0,
-                    # "last_modified": obj.last_modified.isoformat() if getattr(obj, "last_modified", None) else None,
-                    # "etag": (obj.etag or "").replace('"', ""),
-                    # "content_type": "application/octet-stream",
-                    # "is_dir": False,
-                    # "metadata": {},
                 })
-                count += 1
+                remaining_take -= 1
         except Exception as e:
             logger.warning(f"list_objects bucket {bucket_name} error: {e}")
-            result.append({"bucket_name": bucket_name, "objects": [], "error": str(e)})
             continue
-        result.append({"bucket_name": bucket_name, "objects": objects})
-    return result
+
+    # 遍历结束：本页未取满，说明没有更多了，总数可知
+    return {
+        "items": items,
+        "total": offset + len(items),
+        "has_more": False,
+        "total_buckets": len(buckets_to_list),
+    }
 
 
 def _collect_database_all(datasource: DataSource, datasource_id: str, access_token: Optional[str] = None,
@@ -199,20 +218,22 @@ def _collect_database_all(datasource: DataSource, datasource_id: str, access_tok
 
 
 @router.get(
-    "/datasource/{datasource_id}/all-data",
+    "/datasource/all-data",
     response_model=DataResponse[Dict[str, Any]],
-    summary="获取指定数据源的全部数据",
-    description="根据数据源类型返回：对象存储(按桶递归)、文件系统(递归)、数据库(所有表及数据)",
+    summary="获取指定数据源的数据（支持分页）",
+    description="根据数据源类型返回：对象存储(按桶递归)、文件系统(递归)、数据库(表列表)。三种类型均支持 page、page_size 分页。",
 )
 async def get_datasource_all_data(
     datasource_id: str,
+    page: int = Query(1, ge=1, description="页码，从 1 开始"),
+    page_size: int = Query(50, ge=1, le=1000, description="每页条数，三种数据源通用"),
     max_rows_per_table: int = Query(10000, ge=1, le=100000, description="数据库每表最大返回行数"),
     max_objects_per_bucket: int = Query(50000, ge=1, le=100000, description="对象存储每桶最大对象数"),
     current_user: User = Depends(get_current_active_user),
     access_token: Optional[str] = Depends(get_token_from_request),
     db: Session = Depends(get_db),
 ) -> Any:
-    """返回指定 datasource_id 下的全部数据（按类型分别处理）。"""
+    """返回指定 datasource_id 下的数据（按类型分别处理），支持分页。"""
     datasource = db.query(DataSource).filter(DataSource.id == datasource_id).first()
     if not datasource:
         raise HTTPException(
@@ -243,7 +264,14 @@ async def get_datasource_all_data(
                     detail="配置的根路径不存在",
                 )
             items = _collect_filesystem_recursive(base_path, base_path, datasource_id, access_token)
-            payload["data"] = {"items": items, "total": len(items)}
+            total = len(items)
+            offset = (page - 1) * page_size
+            payload["data"] = {
+                "items": items[offset : offset + page_size],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            }
         except HTTPException:
             raise
         except Exception as e:
@@ -257,18 +285,23 @@ async def get_datasource_all_data(
         try:
             config = parse_datasource_config(datasource.config)
             minio_service = create_minio_service_with_retry(config)
-            buckets_with_objects = _collect_object_storage_all(
+            offset = (page - 1) * page_size
+            result = _collect_object_storage_all(
                 minio_service,
                 datasource_id,
                 access_token,
                 max_objects_per_bucket=max_objects_per_bucket,
                 config=config,
+                offset=offset,
+                limit=page_size,
             )
-            total_objects = sum(len(b.get("objects", [])) for b in buckets_with_objects)
             payload["data"] = {
-                "buckets": buckets_with_objects,
-                "total_buckets": len(buckets_with_objects),
-                "total_objects": total_objects,
+                "items": result["items"],
+                "total": result["total"],
+                "has_more": result["has_more"],
+                "page": page,
+                "page_size": page_size,
+                "total_buckets": result["total_buckets"],
             }
         except HTTPException:
             raise
@@ -282,9 +315,13 @@ async def get_datasource_all_data(
     elif datasource.type == DataSourceType.DATABASE:
         try:
             tables_with_data = _collect_database_all(datasource, datasource_id, access_token, max_rows_per_table=max_rows_per_table)
+            total_tables = len(tables_with_data)
+            offset = (page - 1) * page_size
             payload["data"] = {
-                "tables": tables_with_data,
-                "total_tables": len(tables_with_data),
+                "tables": tables_with_data[offset : offset + page_size],
+                "total": total_tables,
+                "page": page,
+                "page_size": page_size,
             }
         except HTTPException:
             raise
