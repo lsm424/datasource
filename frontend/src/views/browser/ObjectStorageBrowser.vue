@@ -633,6 +633,9 @@ onMounted(async () => {
   if (bucket) {
     currentBucket.value = bucket
     currentPrefix.value = prefix || ''
+    if (prefix) {
+      await tryPreviewPrefixFromQuery(bucket, prefix)
+    }
     await loadObjects()
   } 
   // 如果URL中没有bucket，检查数据源配置中是否指定了bucket
@@ -664,6 +667,9 @@ watch(() => route.params.id, async (newId) => {
     if (bucket) {
       currentBucket.value = bucket
       currentPrefix.value = prefix || ''
+      if (prefix) {
+        await tryPreviewPrefixFromQuery(bucket, prefix)
+      }
       await loadObjects()
     } 
     // 如果URL中没有bucket，检查数据源配置中是否指定了bucket
@@ -693,6 +699,9 @@ watch(() => route.query, async (newQuery) => {
     currentBucket.value = bucket || ''
     if (bucket) {
       currentPrefix.value = prefix || ''
+      if (prefix) {
+        await tryPreviewPrefixFromQuery(bucket, prefix)
+      }
       await loadObjects()
     } 
     // 如果URL中没有bucket，检查数据源配置中是否指定了bucket
@@ -706,6 +715,9 @@ watch(() => route.query, async (newQuery) => {
     }
   } else if (prefix !== currentPrefix.value) {
     currentPrefix.value = prefix || ''
+    if (prefix) {
+      await tryPreviewPrefixFromQuery(currentBucket.value, prefix)
+    }
     await loadObjects()
   }
 })
@@ -1217,6 +1229,22 @@ function getPreviewType(object: any): string {
   }
   
   return 'unsupported'
+}
+
+/**
+ * 当 URL 的 bucket + prefix 指向一个文件时，自动弹出预览浮窗；否则返回 false。
+ * 用于 /browse/object_storage/:id?bucket=xxx&prefix=path/to/file.mp4 直接预览文件。
+ */
+async function tryPreviewPrefixFromQuery(bucketFromQuery: string, prefixFromQuery: string): Promise<boolean> {
+  if (!bucketFromQuery || !prefixFromQuery || prefixFromQuery.endsWith('/')) return false
+  const key = prefixFromQuery.replace(/\/+$/, '')
+  const obj = { key, isFolder: false }
+  if (getPreviewType(obj) === 'unsupported') return false
+  currentBucket.value = bucketFromQuery
+  const parentPrefix = key.includes('/') ? key.split('/').slice(0, -1).join('/') : ''
+  currentPrefix.value = parentPrefix
+  await previewObject(obj)
+  return true
 }
 
 async function previewObject(object: any) {

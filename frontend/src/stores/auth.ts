@@ -206,6 +206,25 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * 从 URL 的 token 参数恢复登录状态（用于无痕/新窗口打开带 token 的链接）
+   * 将 token 写入 store 和 localStorage，并拉取用户信息，使 isAuthenticated 通过
+   */
+  const setTokenFromQuery = async (tokenStr: string) => {
+    if (!tokenStr || !tokenStr.trim()) return
+    token.value = tokenStr.trim()
+    localStorage.setItem('auth_token', token.value)
+    localStorage.setItem('auth_token_timestamp', Date.now().toString())
+    try {
+      const userData = await authApi.getCurrentUser()
+      user.value = userData
+    } catch (error) {
+      console.error('❌ URL token 无效或已过期', error)
+      clearAuth()
+      throw error
+    }
+  }
+
   return {
     // 状态
     user: readonly(user),
@@ -226,6 +245,7 @@ export const useAuthStore = defineStore('auth', () => {
     clearAuth,
     updateUser,
     validateToken,
-    isTokenExpired
+    isTokenExpired,
+    setTokenFromQuery
   }
 })

@@ -292,7 +292,7 @@
         
         <!-- 图片预览 -->
         <div v-else-if="previewType === 'image'" class="image-preview">
-          <img :src="previewUrl" :alt="previewFile.name" />
+          <img :src="previewUrl" :alt="currentPreviewFile.name" />
         </div>
         
         <!-- JSON预览 -->
@@ -409,6 +409,11 @@ const isInFavorites = computed(() => {
 // 生命周期
 onMounted(async () => {
   await loadDataSource()
+  currentPath.value = (route.query.path as string) || ''
+  const pathFromQuery = currentPath.value
+  if (pathFromQuery) {
+    await tryPreviewPathFromQuery(pathFromQuery)
+  }
   await loadDirectoryTree()
   await loadFiles()
   loadFavorites()
@@ -419,13 +424,20 @@ watch(() => route.params.id, async (newId) => {
   if (newId) {
     await loadDataSource()
     await loadDirectoryTree()
-    currentPath.value = ''
+    currentPath.value = (route.query.path as string) || ''
+    if (currentPath.value) {
+      await tryPreviewPathFromQuery(currentPath.value)
+    }
     await loadFiles()
   }
 })
 
-watch(() => route.query.path, (newPath) => {
-  currentPath.value = (newPath as string) || ''
+watch(() => route.query.path, async (newPath) => {
+  const pathStr = (newPath as string) || ''
+  currentPath.value = pathStr
+  if (pathStr) {
+    await tryPreviewPathFromQuery(pathStr)
+  }
   loadFiles()
 })
 
@@ -748,6 +760,53 @@ async function previewFile(file: any) {
     ElMessage.error('预览失败')
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * 当 URL 的 path 参数指向文件时，请求内容并自动弹出预览浮窗；若为目录则返回 false。
+ * 用于 /browse/filesystem/:id?path=/xxx 直接打开文件预览。
+ */
+async function tryPreviewPathFromQuery(pathFromQuery: string): Promise<boolean> {
+  if (!pathFromQuery || pathFromQuery === '/') return false
+  const normalizedPath = pathFromQuery.startsWith('/') ? pathFromQuery : '/' + pathFromQuery
+  const id = route.params.id as string
+  const token = authStore.token || localStorage.getItem('auth_token')
+  try {
+    const response = await fetch(
+      `/api/browse/filesystem/${id}/content?path=${encodeURIComponent(normalizedPath)}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    if (!response.ok) return false
+    const data = await response.json()
+    const name = normalizedPath.split('/').filter(Boolean).pop() || normalizedPath
+    const ext = name.split('.').pop()?.toLowerCase()
+    const fileObj = { name, path: normalizedPath, type: 'file' }
+    currentPreviewFile.value = fileObj
+    if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext || '')) {
+      previewType.value = 'image'
+      previewUrl.value = `/api/browse/filesystem/${id}/preview?path=${encodeURIComponent(normalizedPath)}`
+    } else if (['txt', 'md', 'csv', 'log'].includes(ext || '')) {
+      previewType.value = 'text'
+      previewContent.value = data.content ?? ''
+    } else if (ext === 'json') {
+      previewType.value = 'json'
+      previewContent.value = data.content ?? ''
+    } else if (['xlsx', 'xls'].includes(ext || '')) {
+      previewType.value = 'excel'
+      previewContent.value = data.content ?? ''
+      currentPreviewFile.value = {
+        ...fileObj,
+        excelInfo: { rows: data.rows, columns: data.columns }
+      }
+    } else {
+      previewType.value = 'unsupported'
+    }
+    currentPath.value = normalizedPath.replace(/\/[^/]+$/, '') || '/'
+    showPreviewDialog.value = true
+    return true
+  } catch {
+    return false
   }
 }
 

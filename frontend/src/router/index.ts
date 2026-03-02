@@ -93,10 +93,22 @@ const router = createRouter({
 
 // 路由守卫
 router.beforeEach(async (to, from, next) => {
-  
   const authStore = useAuthStore()
-  
-  // 确保认证状态已初始化（如果有token的话）
+
+  // 若 URL 带有 token 参数，先据此恢复登录状态（支持无痕/新窗口打开带 token 的链接）
+  if (to.query.token && typeof to.query.token === 'string') {
+    try {
+      await authStore.setTokenFromQuery(to.query.token)
+      const { token: _t, ...restQuery } = to.query
+      next({ path: to.path, query: restQuery, replace: true })
+      return
+    } catch {
+      next('/login')
+      return
+    }
+  }
+
+  // 确保认证状态已初始化（如果有 token 的话）
   if (localStorage.getItem('auth_token') && !authStore.user) {
     try {
       await authStore.initAuth()
@@ -104,16 +116,15 @@ router.beforeEach(async (to, from, next) => {
       console.error('❌ 路由守卫: 认证初始化失败', error)
     }
   }
-  
-  
+
   // 如果路由需要认证
   if (to.meta.requiresAuth !== false) {
     if (!authStore.isAuthenticated) {
       next('/login')
       return
     }
-    
-    // 额外检查：验证token有效性
+
+    // 额外检查：验证 token 有效性
     if (authStore.token && authStore.isTokenExpired()) {
       authStore.clearAuth()
       next('/login')

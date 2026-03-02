@@ -1,5 +1,5 @@
 from typing import Generator, Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
@@ -10,8 +10,18 @@ from app.core.security import verify_token
 from app.models.user import User, UserRole
 from app.schemas.user import TokenData
 
-# HTTP Bearer token scheme
-security = HTTPBearer()
+# HTTP Bearer token scheme（auto_error=False 以便同时支持 URL 参数 token）
+security = HTTPBearer(auto_error=False)
+
+
+def get_token_from_request(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    token: Optional[str] = Query(None, alias="token", description="访问令牌，可与 Authorization 头二选一"),
+) -> Optional[str]:
+    """从请求头 Authorization: Bearer 或 URL 查询参数 token 中获取访问令牌"""
+    if credentials and credentials.credentials:
+        return credentials.credentials
+    return token if token else None
 
 
 def get_db() -> Generator:
@@ -25,24 +35,25 @@ def get_db() -> Generator:
 
 def get_current_user(
     db: Session = Depends(get_db),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    token: Optional[str] = Depends(get_token_from_request),
 ) -> User:
-    """获取当前用户"""
+    """获取当前用户（支持 Authorization: Bearer 或 URL 参数 token=）"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="无法验证凭据",
         headers={"WWW-Authenticate": "Bearer"},
     )
     
+    if not token:
+        raise credentials_exception
+    
     try:
-        # 验证token
-        token_data = verify_token(credentials.credentials)
+        token_data = verify_token(token)
         if token_data.user_id is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
     
-    # 从数据库获取用户信息
     user = db.query(User).filter(User.id == token_data.user_id).first()
     if user is None:
         raise credentials_exception
@@ -76,14 +87,14 @@ def get_current_admin_user(
 
 def get_current_user_or_none(
     db: Session = Depends(get_db),
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+    token: Optional[str] = Depends(get_token_from_request),
 ) -> Optional[User]:
-    """获取当前用户（可选，允许匿名访问）"""
-    if credentials is None:
+    """获取当前用户（可选，允许匿名访问；支持 Authorization 或 URL 参数 token=）"""
+    if not token:
         return None
     
     try:
-        token_data = verify_token(credentials.credentials)
+        token_data = verify_token(token)
         if token_data.user_id is None:
             return None
         
