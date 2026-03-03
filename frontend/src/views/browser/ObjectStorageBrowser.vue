@@ -399,8 +399,20 @@
           <div class="text-toolbar">
             <el-tag size="small" type="info">{{ currentPreviewObject.key ? getFileType(currentPreviewObject) : '文本文件' }}</el-tag>
             <el-tag size="small">{{ formatFileSize(currentPreviewObject.size || 0) }}</el-tag>
+            <el-button
+              v-if="csvChartData"
+              size="small"
+              :type="showCsvChartView ? 'primary' : 'default'"
+              @click="showCsvChartView = !showCsvChartView"
+            >
+              <el-icon><DataLine /></el-icon>
+              {{ showCsvChartView ? '文本' : '图形' }}
+            </el-button>
           </div>
-          <pre class="text-content"><code>{{ previewContent }}</code></pre>
+          <div v-if="showCsvChartView && csvChartData && csvChartOption" class="csv-chart-container">
+            <v-chart class="csv-chart" :option="csvChartOption" autoresize />
+          </div>
+          <pre v-else class="text-content"><code>{{ previewContent }}</code></pre>
         </div>
         
         <!-- JSON预览 -->
@@ -539,11 +551,18 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Box, FolderOpened, Document, Delete, Download, InfoFilled, CopyDocument,
-  Picture, VideoPlay, Lock, Folder
+  Picture, VideoPlay, Lock, Folder, DataLine
 } from '@element-plus/icons-vue'
 import { useDataSourceStore } from '@/stores/datasource'
 import { useAuthStore } from '@/stores/auth'
 import { objectStorageApi } from '@/api/datasource'
+import VChart from 'vue-echarts'
+import { use } from 'echarts/core'
+import { LineChart } from 'echarts/charts'
+import { TitleComponent, TooltipComponent, LegendComponent, GridComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+
+use([LineChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent, CanvasRenderer])
 
 const route = useRoute()
 const router = useRouter()
@@ -575,6 +594,7 @@ const previewContent = ref('')
 const previewUrl = ref('')
 const previewType = ref('')
 const previewBlobUrl = ref('') // 存储blob URL，用于媒体文件预览
+const showCsvChartView = ref(false) // CSV 图形视图开关（Year,5%,Mean,95% 三曲线）
 
 // 详情对话框
 const showInfoDialog = ref(false)
@@ -607,6 +627,56 @@ const filteredObjects = computed(() => {
   return objects.value.filter(object => 
     object.key.toLowerCase().includes(query)
   )
+})
+
+/** 解析 CSV 内容，若列为 Year, 5%, Mean, 95% 则返回可绘图数据 */
+const csvChartData = computed(() => {
+  const content = previewContent.value
+  if (!content || typeof content !== 'string') return null
+  const lines = content.trim().split(/\r?\n/).filter(Boolean)
+  if (lines.length < 2) return null
+  const headers = lines[0].split(',').map((h: string) => h.trim())
+  const hLower = headers.map((h: string) => h.toLowerCase())
+  const yearIdx = hLower.findIndex((h: string) => h === 'year')
+  const p5Idx = headers.findIndex((h: string) => h === '5%')
+  const meanIdx = hLower.findIndex((h: string) => h === 'mean')
+  const p95Idx = headers.findIndex((h: string) => h === '95%')
+  if (yearIdx === -1 || p5Idx === -1 || meanIdx === -1 || p95Idx === -1) return null
+  const yearData: number[] = []
+  const p5Data: number[] = []
+  const meanData: number[] = []
+  const p95Data: number[] = []
+  for (let i = 1; i < lines.length; i++) {
+    const cells = lines[i].split(',').map((c: string) => c.trim())
+    const y = parseFloat(cells[yearIdx])
+    const v5 = parseFloat(cells[p5Idx])
+    const vm = parseFloat(cells[meanIdx])
+    const v95 = parseFloat(cells[p95Idx])
+    if (!isNaN(y) && !isNaN(v5) && !isNaN(vm) && !isNaN(v95)) {
+      yearData.push(y)
+      p5Data.push(v5)
+      meanData.push(vm)
+      p95Data.push(v95)
+    }
+  }
+  if (yearData.length === 0) return null
+  return { yearData, p5Data, meanData, p95Data }
+})
+
+const csvChartOption = computed(() => {
+  const d = csvChartData.value
+  if (!d) return null
+  return {
+    xAxis: { type: 'category', data: d.yearData, name: 'Year' },
+    yAxis: { type: 'value', name: 'Value' },
+    series: [
+      { name: '5%', type: 'line', data: d.p5Data, smooth: true },
+      { name: 'Mean', type: 'line', data: d.meanData, smooth: true },
+      { name: '95%', type: 'line', data: d.p95Data, smooth: true }
+    ],
+    tooltip: { trigger: 'axis' },
+    legend: { top: 0 }
+  }
 })
 
 // 计算是否可以返回
@@ -1449,10 +1519,10 @@ function cleanupPreviewBlobUrl() {
   }
 }
 
-// 监听预览对话框关闭，清理blob URL
+// 监听预览对话框关闭，清理blob URL 并重置图表视图
 watch(showPreviewDialog, (newValue) => {
   if (!newValue) {
-    // 延迟清理，确保对话框完全关闭
+    showCsvChartView.value = false
     setTimeout(() => {
       cleanupPreviewBlobUrl()
     }, 100)
@@ -2188,6 +2258,16 @@ async function copyToClipboard(text: string) {
 .json-content {
   background: #f8f9fa;
   color: #2c3e50;
+}
+
+.csv-chart-container {
+  padding: 20px;
+  min-height: 400px;
+}
+
+.csv-chart {
+  width: 100%;
+  height: 400px;
 }
 
 /* Excel预览样式 */
