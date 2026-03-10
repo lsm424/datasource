@@ -11,6 +11,9 @@ export interface User {
   email: string
   name: string
   role: UserRole
+  roleId?: string
+  roleName?: string
+  roleCode?: string
   phone?: string
   company?: string
   bio?: string
@@ -78,6 +81,7 @@ export interface CreateUserForm {
   name: string
   password: string
   role: UserRole
+  roleId?: string
   phone?: string
   company?: string
   bio?: string
@@ -89,6 +93,7 @@ export interface AdminUpdateUserForm {
   name?: string
   email?: string
   role?: UserRole
+  roleId?: string
   phone?: string
   company?: string
   bio?: string
@@ -101,6 +106,7 @@ export interface UserListQuery {
   page?: number
   limit?: number
   role?: UserRole
+  roleId?: string
   isActive?: boolean
   search?: string
 }

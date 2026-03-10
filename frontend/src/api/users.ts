@@ -20,6 +20,7 @@ export interface UserListQuery {
   limit?: number
   search?: string
   role?: string
+  role_id?: string
   is_active?: boolean
 }
 
@@ -78,7 +79,7 @@ export const userApi = {
   },
 
   // 更新用户（管理员）
-  updateUser: (userId: string, data: UpdateUserForm): Promise<ApiResponse<User>> => {
+  updateUser: (userId: string, data: any): Promise<ApiResponse<User>> => {
     return put<ApiResponse<User>>(`/users/${userId}`, data)
   },
 

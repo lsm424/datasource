@@ -83,8 +83,8 @@ async def create_tables():
     create_database()
     
     # 导入所有模型以确保它们被注册
-    from app.models import user, datasource  # noqa
-    
+    from app.models import user, datasource, role  # noqa
+
     # 创建所有表
     Base.metadata.create_all(bind=engine)
     logging.info("Database tables created successfully")

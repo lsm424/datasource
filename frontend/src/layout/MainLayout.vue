@@ -84,8 +84,8 @@
               </el-menu-item>
             </el-sub-menu>
 
-            <!-- 数据浏览 -->
-            <el-sub-menu index="browse" v-if="availableDataSources && availableDataSources.length > 0">
+            <!-- 数据浏览：一级菜单对所有登录用户可见，二级菜单根据数据源列表动态展示 -->
+            <el-sub-menu index="browse">
               <template #title>
                 <el-icon><View /></el-icon>
                 <span>数据浏览</span>
@@ -108,6 +108,10 @@
             <el-menu-item index="/users" v-if="authStore.isAdmin">
               <el-icon><UserFilled /></el-icon>
               <template #title>用户管理</template>
+            </el-menu-item>
+            <el-menu-item index="/roles" v-if="authStore.isAdmin">
+              <el-icon><UserFilled /></el-icon>
+              <template #title>角色管理</template>
             </el-menu-item>
 
             <!-- 个人中心 -->
@@ -140,7 +144,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {

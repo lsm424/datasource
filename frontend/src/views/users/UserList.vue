@@ -18,13 +18,17 @@
         />
         
         <el-select
-          v-model="filterRole"
+          v-model="filterRoleId"
           placeholder="角色筛选"
           clearable
           @change="handleFilter"
         >
-          <el-option label="管理员" value="admin" />
-          <el-option label="普通用户" value="user" />
+          <el-option
+            v-for="item in allRoles"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
         </el-select>
 
         <el-select
@@ -117,10 +121,10 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="role" label="角色" width="100">
+        <el-table-column prop="roleName" label="角色" width="140">
           <template #default="{ row }">
-            <el-tag :type="row.role === 'admin' ? 'danger' : 'primary'">
-              {{ row.role === 'admin' ? '管理员' : '普通用户' }}
+            <el-tag type="primary">
+              {{ row.roleName || '未分配' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -254,11 +258,21 @@
           </el-form-item>
         </div>
 
-        <el-form-item label="角色" prop="role">
+        <el-form-item label="系统角色（账号类型）" prop="role">
           <el-radio-group v-model="userForm.role">
             <el-radio label="user">普通用户</el-radio>
             <el-radio label="admin">管理员</el-radio>
           </el-radio-group>
+        </el-form-item>
+        <el-form-item label="数据访问角色" prop="roleId">
+          <el-select v-model="userForm.roleId" placeholder="请选择数据访问角色">
+            <el-option
+              v-for="item in allRoles"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
         </el-form-item>
 
         <el-form-item v-if="!editingUser" label="密码" prop="password">
@@ -308,6 +322,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 
 import { useAuthStore } from '@/stores/auth'
 import type { User, UserRole } from '@/types/auth'
+import { roleApi, type Role } from '@/api/roles'
 
 const authStore = useAuthStore()
 
@@ -323,7 +338,8 @@ const totalCount = ref(0)
 const isLoading = ref(false)
 const isSaving = ref(false)
 const searchQuery = ref('')
-const filterRole = ref<UserRole | ''>('')
+const filterRole = ref<UserRole | ''>('') // 仍保留按系统角色过滤
+const filterRoleId = ref<string | ''>('') // 按数据访问角色过滤
 const filterStatus = ref<boolean | ''>('')
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -331,6 +347,9 @@ const sortField = ref('')
 const sortOrder = ref('')
 const showCreateDialog = ref(false)
 const editingUser = ref<User | null>(null)
+
+// 角色列表（数据访问角色）
+const allRoles = ref<Role[]>([])
 
 // 表单数据
 const userForm = reactive({
@@ -342,7 +361,8 @@ const userForm = reactive({
   bio: '',
   role: 'user' as UserRole,
   password: '',
-  isActive: true
+  isActive: true,
+  roleId: '' as string
 })
 
 // 验证规则
@@ -379,7 +399,10 @@ const userRules: FormRules = {
     }
   ],
   role: [
-    { required: true, message: '请选择角色', trigger: 'change' }
+    { required: true, message: '请选择系统角色', trigger: 'change' }
+  ],
+  roleId: [
+    { required: true, message: '请选择数据访问角色', trigger: 'change' }
   ]
 }
 
@@ -398,6 +421,7 @@ const refreshList = async () => {
       limit: pageSize.value,
       search: searchQuery.value || undefined,
       role: filterRole.value || undefined,
+      role_id: filterRoleId.value || undefined,
       is_active: filterStatus.value !== '' ? filterStatus.value : undefined
     }
     
@@ -456,7 +480,8 @@ const editUser = (user: User) => {
     bio: user.bio || '',
     role: user.role,
     password: '',
-    isActive: user.isActive
+    isActive: user.isActive,
+    roleId: (user as any).roleId || ''
   })
   showCreateDialog.value = true
 }
@@ -474,8 +499,8 @@ const toggleUserStatus = async (user: User) => {
       }
     )
     
-    // 调用API更新用户状态  
-    await userApi.updateUser(user.id, { is_active: !user.isActive })
+        // 调用API更新用户状态  
+        await userApi.updateUser(user.id, { is_active: !user.isActive })
     ElMessage.success(`用户${action}成功`)
     // 刷新列表
     await refreshList()
@@ -539,7 +564,8 @@ const resetForm = () => {
     bio: '',
     role: 'user' as UserRole,
     password: '',
-    isActive: true
+    isActive: true,
+    roleId: ''
   })
   userFormRef.value?.clearValidate()
 }
@@ -552,6 +578,14 @@ const formatDate = (dateString: string): string => {
 
 // 生命周期
 onMounted(async () => {
+  // 先加载角色列表
+  try {
+    const res = await roleApi.getRoles()
+    const list = Array.isArray(res.data) ? res.data : res.data?.data || res.data || []
+    allRoles.value = list
+  } catch (error) {
+    console.error('获取角色列表失败:', error)
+  }
   await refreshList()
 })
 

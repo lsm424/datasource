@@ -72,6 +72,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: '用户管理', requiresAdmin: true }
       },
       {
+        path: '/roles',
+        name: 'RoleManagement',
+        component: () => import('@/views/roles/RoleList.vue'),
+        meta: { title: '角色管理', requiresAdmin: true }
+      },
+      {
         path: '/profile',
         name: 'Profile',
         component: () => import('@/views/users/Profile.vue'),

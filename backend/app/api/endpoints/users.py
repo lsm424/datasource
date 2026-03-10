@@ -6,6 +6,7 @@ import logging
 from app.core.database import get_db
 from app.core.deps import get_current_active_user, get_current_admin_user
 from app.models.user import User, UserRole
+from app.models.role import Role
 from app.schemas.user import (
     UserPublic,
     UserInDB,
@@ -34,7 +35,7 @@ async def get_users(
     
     query = db.query(User)
     
-    # 角色筛选
+    # 角色筛选（系统角色 admin/user）
     if role:
         query = query.filter(User.role == role)
     
@@ -57,8 +58,17 @@ async def get_users(
     # 分页
     users = query.offset((page - 1) * limit).limit(limit).all()
     
-    # 转换为响应模型
-    user_list = [UserPublic.model_validate(user).model_dump(by_alias=True) for user in users]
+    # 预取所有角色，构建映射
+    roles = {r.id: r for r in db.query(Role).all()}
+    
+    # 转换为响应模型，并附加角色名称
+    user_list = []
+    for user in users:
+        data = UserPublic.model_validate(user).model_dump(by_alias=True)
+        if user.role_id and user.role_id in roles:
+            data["roleName"] = roles[user.role_id].name
+            data["roleCode"] = roles[user.role_id].code
+        user_list.append(data)
     
     return ListResponse.create(
         data=user_list,
@@ -131,10 +141,14 @@ async def get_user_by_id(
             detail="用户不存在"
         )
     
-    user_data = UserPublic.model_validate(user)
+    roles = {r.id: r for r in db.query(Role).all()}
+    data = UserPublic.model_validate(user).model_dump(by_alias=True)
+    if user.role_id and user.role_id in roles:
+        data["roleName"] = roles[user.role_id].name
+        data["roleCode"] = roles[user.role_id].code
     
     return DataResponse(
-        data=user_data.model_dump(by_alias=True),
+        data=data,
         message="获取用户信息成功"
     )
 
@@ -173,10 +187,14 @@ async def create_user(
     db.commit()
     db.refresh(new_user)
     
-    user_response = UserPublic.model_validate(new_user)
+    roles = {r.id: r for r in db.query(Role).all()}
+    data = UserPublic.model_validate(new_user).model_dump(by_alias=True)
+    if new_user.role_id and new_user.role_id in roles:
+        data["roleName"] = roles[new_user.role_id].name
+        data["roleCode"] = roles[new_user.role_id].code
     
     return DataResponse(
-        data=user_response.model_dump(by_alias=True),
+        data=data,
         message="用户创建成功"
     )
 
@@ -216,10 +234,14 @@ async def update_user(
     db.commit()
     db.refresh(user)
     
-    user_data = UserPublic.model_validate(user)
+    roles = {r.id: r for r in db.query(Role).all()}
+    data = UserPublic.model_validate(user).model_dump(by_alias=True)
+    if user.role_id and user.role_id in roles:
+        data["roleName"] = roles[user.role_id].name
+        data["roleCode"] = roles[user.role_id].code
     
     return DataResponse(
-        data=user_data.model_dump(by_alias=True),
+        data=data,
         message="用户信息更新成功"
     )
 

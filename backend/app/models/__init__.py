@@ -7,14 +7,17 @@
 from .user import User, UserRole
 from .datasource import DataSource, DataSourceType, DatabaseType
 from .data_stats import DataSourceStats, DailyStats, StatsTask
+from .role import Role, RoleDatasetPermission
 
 __all__ = [
     "User",
-    "UserRole", 
+    "UserRole",
     "DataSource",
     "DataSourceType",
     "DatabaseType",
     "DataSourceStats",
-    "DailyStats", 
-    "StatsTask"
+    "DailyStats",
+    "StatsTask",
+    "Role",
+    "RoleDatasetPermission",
 ]

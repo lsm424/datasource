@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_active_user, get_current_admin_user
 from app.models.user import User
 from app.models.datasource import DataSource, DataSourceType
+from app.models.role import RoleDatasetPermission
 from app.models.data_stats import DataSourceStats as DataSourceStatsModel
 from app.schemas.datasource import (
     DataSourceCreate,
@@ -54,6 +55,20 @@ async def get_datasources(
             (DataSource.cname.like(search_pattern)) |
             (DataSource.company.like(search_pattern)) |
             (DataSource.desc.like(search_pattern))
+        )
+
+    # 非管理员按数据访问角色过滤可见数据源
+    if not current_user.is_admin:
+        if not getattr(current_user, "role_id", None):
+            # 未绑定数据访问角色则无任何数据源
+            return ListResponse.create(data=[], total=0, page=page, limit=limit)
+        query = (
+            query.join(
+                RoleDatasetPermission,
+                DataSource.id == RoleDatasetPermission.datasource_id,
+            )
+            .filter(RoleDatasetPermission.role_id == current_user.role_id)
+            .distinct()
         )
     
     # 计算总数

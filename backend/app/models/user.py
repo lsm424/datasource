@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Enum, Text, JSON
+from sqlalchemy import Column, String, Boolean, DateTime, Enum, Text, JSON, ForeignKey
 from sqlalchemy.sql import func
 from enum import Enum as PyEnum
 import uuid
@@ -35,6 +35,9 @@ class User(Base):
     phone = Column(String(20), nullable=True, comment="手机号")
     company = Column(String(100), nullable=True, comment="公司/组织")
     bio = Column(Text, nullable=True, comment="个人简介")
+
+    # 数据访问角色（与业务角色 UserRole 区分）
+    role_id = Column(String(36), ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, comment="数据访问角色ID")
     
     # SSO相关字段
     external_id = Column(String(200), nullable=True, unique=True, index=True, comment="外部系统用户ID")
