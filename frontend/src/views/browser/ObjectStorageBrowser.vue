@@ -258,6 +258,12 @@
                       预览
                     </el-button>
                     <el-button 
+                      icon="ChatDotRound" 
+                      @click="openAnalyze(row)"
+                    >
+                      分析
+                    </el-button>
+                    <el-button 
                       icon="Download" 
                       @click="downloadObject(row)"
                     >
@@ -542,6 +548,14 @@
         </el-descriptions-item>
       </el-descriptions>
     </el-dialog>
+
+    <ResourceAnalyzeDialog
+      v-model:visible="showAnalyzeDialog"
+      :resource-key="analyzeResourceKey"
+      :resource-display-name="analyzeDisplayName"
+      :datasource-type="analyzeDatasourceType"
+      :datasource-id="analyzeDatasourceId"
+    />
   </div>
 </template>
 
@@ -551,8 +565,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Box, FolderOpened, Document, Delete, Download, InfoFilled, CopyDocument,
-  Picture, VideoPlay, Lock, Folder, DataLine
+  Picture, VideoPlay, Lock, Folder, DataLine, ChatDotRound
 } from '@element-plus/icons-vue'
+import ResourceAnalyzeDialog from '@/components/ResourceAnalyzeDialog.vue'
 import { useDataSourceStore } from '@/stores/datasource'
 import { useAuthStore } from '@/stores/auth'
 import { objectStorageApi } from '@/api/datasource'
@@ -586,6 +601,13 @@ const totalObjects = ref(0)
 // 新增文件系统风格的数据
 const showSidebar = ref(true)
 const directoryTree = ref([])
+
+// 分析对话
+const showAnalyzeDialog = ref(false)
+const analyzeResourceKey = ref('')
+const analyzeDisplayName = ref('')
+const analyzeDatasourceType = ref('object_storage')
+const analyzeDatasourceId = ref('')
 
 // 预览相关
 const showPreviewDialog = ref(false)
@@ -1315,6 +1337,16 @@ async function tryPreviewPrefixFromQuery(bucketFromQuery: string, prefixFromQuer
   currentPrefix.value = parentPrefix
   await previewObject(obj)
   return true
+}
+
+function openAnalyze(row: any) {
+  const id = route.params.id as string
+  analyzeDatasourceId.value = id
+  analyzeDatasourceType.value = 'object_storage'
+  analyzeResourceKey.value = `object_storage:${id}:${currentBucket.value}:${row.key}`
+  const key = row.key || ''
+  analyzeDisplayName.value = row.name || (key.includes('/') ? key.split('/').pop() : key) || '对象'
+  showAnalyzeDialog.value = true
 }
 
 async function previewObject(object: any) {

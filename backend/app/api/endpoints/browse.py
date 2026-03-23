@@ -1,5 +1,5 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import io
@@ -335,8 +335,9 @@ async def list_filesystem_files(
 async def download_file(
     datasource_id: str,
     path: str = Query(..., description="文件路径"),
+    request: Request = None,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """下载文件"""
     
@@ -446,12 +447,45 @@ async def download_file(
         if mime_type is None:
             mime_type = "application/octet-stream"
         
-        # 创建文件流
-        def file_generator():
+        # 解析 Range 头，支持视频拖动
+        range_header = request.headers.get("range") if request else None
+        range_start = 0
+        range_end = file_size - 1
+        status_code = status.HTTP_200_OK
+
+        if range_header and range_header.startswith("bytes="):
+            try:
+                range_value = range_header.replace("bytes=", "").strip()
+                start_str, _, end_str = range_value.partition("-")
+                if start_str:
+                    range_start = int(start_str)
+                if end_str:
+                    range_end = int(end_str)
+                if range_start < 0 or range_start >= file_size:
+                    raise ValueError("Invalid range start")
+                if range_end < range_start:
+                    range_end = file_size - 1
+                status_code = status.HTTP_206_PARTIAL_CONTENT
+            except Exception as e:
+                logging.warning(f"无效的 Range 头: {range_header}, 错误: {e}")
+                range_start = 0
+                range_end = file_size - 1
+                status_code = status.HTTP_200_OK
+
+        chunk_size = 8192
+
+        def file_generator(start: int, end: int):
             try:
                 with open(full_path, "rb") as file:
-                    while chunk := file.read(8192):
-                        yield chunk
+                    file.seek(start)
+                    remaining = end - start + 1
+                    while remaining > 0:
+                        read_size = min(chunk_size, remaining)
+                        data = file.read(read_size)
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
             except (OSError, IOError, PermissionError) as e:
                 logging.error(f"读取文件时出错 {full_path}: {e}")
                 raise e
@@ -468,13 +502,27 @@ async def download_file(
             # 如果编码失败，使用原始文件名
             content_disposition = f"attachment; filename={filename}"
         
+        headers = {
+            "Content-Disposition": content_disposition,
+            "Accept-Ranges": "bytes",
+        }
+
+        if status_code == status.HTTP_206_PARTIAL_CONTENT:
+            content_length = range_end - range_start + 1
+            headers.update(
+                {
+                    "Content-Range": f"bytes {range_start}-{range_end}/{file_size}",
+                    "Content-Length": str(content_length),
+                }
+            )
+        else:
+            headers["Content-Length"] = str(file_size)
+
         return StreamingResponse(
-            file_generator(),
+            file_generator(range_start, range_end),
             media_type=mime_type,
-            headers={
-                "Content-Disposition": content_disposition,
-                "Content-Length": str(file_size)
-            }
+            status_code=status_code,
+            headers=headers,
         )
         
     except Exception as e:

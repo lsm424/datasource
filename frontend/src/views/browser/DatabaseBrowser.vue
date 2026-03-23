@@ -73,6 +73,7 @@
                 </div>
                 
                 <div class="view-controls">
+                  <el-button size="small" icon="ChatDotRound" @click="openAnalyzeTable">分析</el-button>
                   <el-button-group size="small">
                     <el-button 
                       :type="showSchema ? '' : 'primary'"
@@ -139,6 +140,7 @@
                 </div>
                 
                 <div class="view-controls">
+                  <el-button size="small" icon="ChatDotRound" @click="openAnalyzeTable">分析</el-button>
                   <el-button-group size="small">
                     <el-button 
                       :type="showSchema ? '' : 'primary'"
@@ -312,6 +314,14 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <ResourceAnalyzeDialog
+      v-model:visible="showAnalyzeDialog"
+      :resource-key="analyzeResourceKey"
+      :resource-display-name="analyzeDisplayName"
+      :datasource-type="analyzeDatasourceType"
+      :datasource-id="analyzeDatasourceId"
+    />
   </div>
 </template>
 
@@ -319,7 +329,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Coin, Grid, Document, Key, Search } from '@element-plus/icons-vue'
+import { Coin, Grid, Document, Key, Search, ChatDotRound } from '@element-plus/icons-vue'
+import ResourceAnalyzeDialog from '@/components/ResourceAnalyzeDialog.vue'
 import { useDataSourceStore } from '@/stores/datasource'
 import { useAuthStore } from '@/stores/auth'
 import { databaseApi } from '@/api/datasource'
@@ -349,11 +360,28 @@ const showCreateDialog = ref(false)
 const editingRecord = ref(null)
 const recordForm = ref({})
 
+// 分析对话
+const showAnalyzeDialog = ref(false)
+const analyzeResourceKey = ref('')
+const analyzeDisplayName = ref('')
+const analyzeDatasourceType = ref('database')
+const analyzeDatasourceId = ref('')
+
 // 计算属性
 const hasWritePermission = computed(() => {
   // 简化权限判断：管理员有写权限，其他用户暂时也给予写权限（可根据需求调整）
   return authStore.user?.role === 'admin' || true
 })
+
+function openAnalyzeTable() {
+  if (!currentTable.value) return
+  const id = route.params.id as string
+  analyzeDatasourceId.value = id
+  analyzeDatasourceType.value = 'database'
+  analyzeResourceKey.value = `database:${id}:${currentTable.value}`
+  analyzeDisplayName.value = `表 ${currentTable.value}`
+  showAnalyzeDialog.value = true
+}
 
 // 根据 URL table 参数打开指定表的数据页
 async function openTableFromQuery(tableName: string) {

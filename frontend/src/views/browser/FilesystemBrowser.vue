@@ -195,6 +195,14 @@
                     预览
                   </el-button>
                   <el-button 
+                    v-if="row.type !== 'directory'"
+                    icon="ChatDotRound"
+                    @click="openAnalyze(row)"
+                    :disabled="!canAnalyze(row)"
+                  >
+                    分析
+                  </el-button>
+                  <el-button 
                     icon="Download" 
                     @click="downloadFile(row)"
                     v-if="row.type !== 'directory'"
@@ -294,6 +302,11 @@
         <div v-else-if="previewType === 'image'" class="image-preview">
           <img :src="previewUrl" :alt="currentPreviewFile.name" />
         </div>
+
+        <!-- 视频预览 -->
+        <div v-else-if="previewType === 'video'" class="video-preview">
+          <video :src="previewUrl" controls style="max-width: 100%; max-height: 70vh;"></video>
+        </div>
         
         <!-- JSON预览 -->
         <div v-else-if="previewType === 'json'" class="json-preview">
@@ -339,6 +352,15 @@
         <el-descriptions-item label="修改时间">{{ formatDate(selectedFileInfo.modified_at) }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>
+
+    <!-- 资源分析对话弹窗 -->
+    <ResourceAnalyzeDialog
+      v-model:visible="showAnalyzeDialog"
+      :resource-key="analyzeResourceKey"
+      :resource-display-name="analyzeDisplayName"
+      :datasource-type="analyzeDatasourceType"
+      :datasource-id="analyzeDatasourceId"
+    />
   </div>
 </template>
 
@@ -349,8 +371,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Folder, FolderOpened, Document, Star, List, Grid, 
   Search, Refresh, View, Download, More, InfoFilled, 
-  Edit, Delete, Picture, VideoPlay, Box
+  Edit, Delete, Picture, VideoPlay, Box, ChatDotRound
 } from '@element-plus/icons-vue'
+import ResourceAnalyzeDialog from '@/components/ResourceAnalyzeDialog.vue'
 import { useDataSourceStore } from '@/stores/datasource'
 import { useAuthStore } from '@/stores/auth'
 import { filesystemApi } from '@/api/datasource'
@@ -387,6 +410,13 @@ const previewType = ref('')
 // 详情对话框
 const showInfoDialog = ref(false)
 const selectedFileInfo = ref(null)
+
+// 分析对话
+const showAnalyzeDialog = ref(false)
+const analyzeResourceKey = ref('')
+const analyzeDisplayName = ref('')
+const analyzeDatasourceType = ref('filesystem')
+const analyzeDatasourceId = ref('')
 
 // 计算属性
 const pathParts = computed(() => {
@@ -710,8 +740,28 @@ function canPreview(file: any): boolean {
   const textExts = ['txt', 'md', 'json', 'xml', 'csv', 'log']
   const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
   const excelExts = ['xlsx', 'xls']
+  const videoExts = ['mp4', 'mov', 'avi', 'mkv', 'webm']
   
-  return textExts.includes(ext) || imageExts.includes(ext) || excelExts.includes(ext)
+  return textExts.includes(ext) || imageExts.includes(ext) || excelExts.includes(ext) || videoExts.includes(ext)
+}
+
+function canAnalyze(file: any): boolean {
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  // 分析目前支持：文本类 / 图片 / 视频（会抽帧为图片）/ CSV
+  const analyzableTextExts = ['txt', 'md', 'json', 'xml', 'csv', 'log']
+  const analyzableImageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
+  const analyzableVideoExts = ['mp4', 'mov', 'avi', 'mkv', 'webm']
+
+  return analyzableTextExts.includes(ext) || analyzableImageExts.includes(ext) || analyzableVideoExts.includes(ext)
+}
+
+function openAnalyze(row: any) {
+  const id = route.params.id as string
+  analyzeDatasourceId.value = id
+  analyzeDatasourceType.value = 'filesystem'
+  analyzeResourceKey.value = `filesystem:${id}:${row.path}`
+  analyzeDisplayName.value = row.name || row.path || '文件'
+  showAnalyzeDialog.value = true
 }
 
 async function previewFile(file: any) {
@@ -720,11 +770,18 @@ async function previewFile(file: any) {
     currentPreviewFile.value = file
     
     const id = route.params.id as string
+    const token = authStore.token || localStorage.getItem('auth_token')
     const ext = file.name.split('.').pop()?.toLowerCase()
     
     if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)) {
       previewType.value = 'image'
-      previewUrl.value = `/api/browse/filesystem/${id}/preview?path=${encodeURIComponent(file.path)}`
+      const base = `/api/browse/filesystem/${id}/download?path=${encodeURIComponent(file.path)}`
+      previewUrl.value = token ? `${base}&token=${encodeURIComponent(token)}` : base
+    } else if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext || '')) {
+      // 本地文件系统视频预览：直接用下载接口作为视频源
+      previewType.value = 'video'
+      const base = `/api/browse/filesystem/${id}/download?path=${encodeURIComponent(file.path)}`
+      previewUrl.value = token ? `${base}&token=${encodeURIComponent(token)}` : base
     } else if (['txt', 'md', 'csv', 'log'].includes(ext)) {
       previewType.value = 'text'
       const response = await fetch(`/api/browse/filesystem/${id}/content?path=${encodeURIComponent(file.path)}`, {
@@ -785,7 +842,12 @@ async function tryPreviewPathFromQuery(pathFromQuery: string): Promise<boolean> 
     currentPreviewFile.value = fileObj
     if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext || '')) {
       previewType.value = 'image'
-      previewUrl.value = `/api/browse/filesystem/${id}/preview?path=${encodeURIComponent(normalizedPath)}`
+      const base = `/api/browse/filesystem/${id}/download?path=${encodeURIComponent(normalizedPath)}`
+      previewUrl.value = token ? `${base}&token=${encodeURIComponent(token)}` : base
+    } else if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext || '')) {
+      previewType.value = 'video'
+      const base = `/api/browse/filesystem/${id}/download?path=${encodeURIComponent(normalizedPath)}`
+      previewUrl.value = token ? `${base}&token=${encodeURIComponent(token)}` : base
     } else if (['txt', 'md', 'csv', 'log'].includes(ext || '')) {
       previewType.value = 'text'
       previewContent.value = data.content ?? ''

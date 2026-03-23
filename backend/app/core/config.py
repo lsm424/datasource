@@ -133,6 +133,17 @@ class Settings(BaseSettings):
     # 开发配置
     RELOAD: bool = Field(default=False, env="RELOAD")
     
+    # 分析功能：OpenAI 兼容接口（优先）；未设置时用 OLLAMA_* 并自动加 /v1
+    OPENAI_BASE_URL: Optional[str] = Field(default=None, env="OPENAI_BASE_URL")
+    OPENAI_MODEL: Optional[str] = Field(default=None, env="OPENAI_MODEL")
+    OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+    OLLAMA_BASE_URL: str = Field(default="http://47.108.93.204:11435", env="OLLAMA_BASE_URL")
+    OLLAMA_MODEL: str = Field(default="qwen3-vl:32b", env="OLLAMA_MODEL")
+
+    # 视频预览配置（本地文件系统）
+    VIDEO_FRAME_INTERVAL_SECONDS: int = Field(default=5, env="VIDEO_FRAME_INTERVAL_SECONDS")
+    VIDEO_MAX_FRAMES: int = Field(default=3, env="VIDEO_MAX_FRAMES")
+
     # 数据统计调度器配置
     ENABLE_SCHEDULER: bool = Field(default=True, env="ENABLE_SCHEDULER")
     STATS_CRON_HOUR: int = Field(default=2, env="STATS_CRON_HOUR")  # 每日统计时间（小时）

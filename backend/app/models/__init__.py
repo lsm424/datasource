@@ -8,6 +8,7 @@ from .user import User, UserRole
 from .datasource import DataSource, DataSourceType, DatabaseType
 from .data_stats import DataSourceStats, DailyStats, StatsTask
 from .role import Role, RoleDatasetPermission
+from .resource_chat import ResourceChatSession, ResourceChatMessage
 
 __all__ = [
     "User",
@@ -20,4 +21,6 @@ __all__ = [
     "StatsTask",
     "Role",
     "RoleDatasetPermission",
+    "ResourceChatSession",
+    "ResourceChatMessage",
 ]

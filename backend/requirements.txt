@@ -55,3 +55,14 @@ psutil==5.9.6
 APScheduler==3.10.4
 
 xlrd==2.0.2
+
+# 分析功能：LangChain + Ollama（二选一即可，优先用 langchain-ollama）
+langchain-core>=0.3.0
+langchain-ollama>=0.2.0
+langchain-community>=0.3.0
+
+# OpenAI 兼容接口（demo 与后续可切换为任意兼容服务）
+openai>=1.0.0
+
+# 视频预览（本地文件系统抽帧）
+opencv-python-headless>=4.8.0
