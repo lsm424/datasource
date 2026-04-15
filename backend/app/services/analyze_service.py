@@ -26,7 +26,8 @@ base_url = settings.OPENAI_BASE_URL or (settings.OLLAMA_BASE_URL.rstrip("/") + "
 model = getattr(settings, "OPENAI_MODEL", None) or getattr(settings, "OLLAMA_MODEL", None)
 api_key = getattr(settings, "OPENAI_API_KEY", None) or "dummy"
 client = OpenAI(base_url=base_url, api_key=api_key)
-
+logger.info(f"OpenAI 客户端初始化，模型={model}，API_KEY={api_key}, BASE_URL={base_url}")
+    
 VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
 
@@ -513,6 +514,7 @@ def chat_stream(
     db.commit()
 
     # OpenAI 兼容接口流式调用
+    logger.info(f"OpenAI 客户端初始化，模型={model}， BASE_URL={base_url}")
     logger.info("openai_messages: %s", openai_messages)
     full: List[str] = []
     try:

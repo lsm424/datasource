@@ -1,3 +1,13 @@
+/*
+ * @Author: wadesmli
+ * @Date: 2026-03-02 12:45:38
+ * @LastEditors: wadesmli
+ * @LastEditTime: 2026-04-14 11:02:37
+ * @FilePath: vite.config.ts
+ * @Description: 
+ * 
+ * Copyright (c) 2026 by wadesmli, All Rights Reserved. 
+ */
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
@@ -19,6 +29,30 @@ const disablePollingPlugin = () => {
   }
 }
 
+// 自定义插件：记录访问日志
+const accessLogPlugin = () => {
+  return {
+    name: 'access-log',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const start = Date.now()
+        const url = req.url
+        const method = req.method
+        const ip = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket.remoteAddress
+
+        res.on('finish', () => {
+          const duration = Date.now() - start
+          const status = res.statusCode
+          const timestamp = new Date().toLocaleString()
+          console.log(`[${timestamp}] ${method} ${url} - ${status} - ${duration}ms - IP: ${ip}`)
+        })
+
+        next()
+      })
+    }
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
@@ -35,6 +69,7 @@ export default defineConfig({
     }),
     // 添加自定义插件
     disablePollingPlugin(),
+    accessLogPlugin(),
   ],
   resolve: {
     alias: {
@@ -51,6 +86,7 @@ export default defineConfig({
       usePolling: false,
       ignored: ['**/node_modules/**', '**/.git/**']
     },
+    allowedHosts: ['falsk.e8.luyouxia.net'],
     // 增加超时时间
     timeout: 30000,
     proxy: {
