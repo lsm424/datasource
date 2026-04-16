@@ -40,14 +40,18 @@
       </div>
     </div>
   </el-dialog>
+
+  <!-- 代码执行侧边面板 -->
+  <CodeExecutePanel v-model="codePanelVisible" :code="selectedCode" />
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Loading } from '@element-plus/icons-vue'
+import { Loading, VideoPlay, DocumentCopy } from '@element-plus/icons-vue'
 import { analyzeApi } from '@/api/analyze'
 import { marked } from 'marked'
+import CodeExecutePanel from './CodeExecutePanel.vue'
 
 const DEFAULT_PROMPT = '请帮我分析/解读这个数据/图片/视频'
 
@@ -70,12 +74,74 @@ const inputText = ref('')
 const streaming = ref(false)
 const streamingContent = ref('')
 const messagesRef = ref<HTMLElement | null>(null)
+const codePanelVisible = ref(false)
+const selectedCode = ref('')
 
 const isDefaultPrompt = computed(() => (inputText.value || '').trim() === DEFAULT_PROMPT)
+
+// 自定义渲染器，为代码块添加操作按钮
+const renderer = new marked.Renderer()
+renderer.code = (codeObj: any) => {
+  // 兼容新旧版本的 marked
+  const code = typeof codeObj === 'string' ? codeObj : (codeObj.text || codeObj.code || '')
+  const lang = typeof codeObj === 'string' ? '' : (codeObj.lang || codeObj.language || 'text')
+  const escapedCode = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const isPython = lang === 'python' || lang === 'py'
+
+  let actions = ''
+  if (isPython) {
+    actions = `
+      <div class="code-actions">
+        <button class="code-action-btn run" onclick="window.runPythonCode(this)" data-code="${encodeURIComponent(code)}">
+          <svg viewBox="0 0 1024 1024" width="14" height="14"><path fill="currentColor" d="M128 128v768h768V128H128zm64 64h640v640H192V192zm160 160l320 160-320 160V352z"/></svg>
+          运行
+        </button>
+        <button class="code-action-btn copy" onclick="window.copyCode(this)" data-code="${encodeURIComponent(code)}">
+          <svg viewBox="0 0 1024 1024" width="14" height="14"><path fill="currentColor" d="M832 64H296c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h496v688c0 4.4 3.6 8 8 8h56c4.4 0 8-3.6 8-8V96c0-17.7-14.3-32-32-32zM704 192H192c-17.7 0-32 14.3-32 32v530.7c0 8.5 3.4 16.6 9.4 22.6l173.3 173.3c2.8 2.8 6.3 4.1 9.8 4.1h416c17.7 0 32-14.3 32-32V224c0-17.7-14.3-32-32-32z"/></svg>
+          复制
+        </button>
+      </div>
+    `
+  }
+
+  return `
+    <div class="code-block-wrapper">
+      <div class="code-block-header">
+        <span class="code-language">${lang}</span>
+        ${actions}
+      </div>
+      <pre class="code-block"><code class="language-${lang}">${escapedCode}</code></pre>
+    </div>
+  `
+}
+
+marked.setOptions({ renderer })
 
 function renderMarkdown(text: string) {
   return marked.parse(text || '')
 }
+
+// 全局函数供代码块按钮调用
+onMounted(() => {
+  (window as any).runPythonCode = (btn: HTMLButtonElement) => {
+    const code = decodeURIComponent(btn.getAttribute('data-code') || '')
+    if (code) {
+      selectedCode.value = code
+      codePanelVisible.value = true
+    }
+  }
+
+  (window as any).copyCode = (btn: HTMLButtonElement) => {
+    const code = decodeURIComponent(btn.getAttribute('data-code') || '')
+    if (code) {
+      navigator.clipboard.writeText(code).then(() => {
+        ElMessage.success('代码已复制到剪贴板')
+      }).catch(() => {
+        ElMessage.error('复制失败')
+      })
+    }
+  }
+})
 
 watch(() => props.visible, async (v) => {
   dialogVisible.value = v
@@ -307,5 +373,89 @@ function onClosed() {
 }
 .send-btn {
   flex-shrink: 0;
+}
+
+/* 代码块样式 */
+.msg-content :deep(.code-block-wrapper) {
+  margin: 8px 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+
+.msg-content :deep(.code-block-header) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #3d3d3d;
+}
+
+.msg-content :deep(.code-language) {
+  font-size: 12px;
+  color: #888;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+.msg-content :deep(.code-actions) {
+  display: flex;
+  gap: 6px;
+}
+
+.msg-content :deep(.code-action-btn) {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #ccc;
+  background: #3d3d3d;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+  height: 22px;
+}
+
+.msg-content :deep(.code-action-btn svg) {
+  width: 12px;
+  height: 12px;
+}
+
+.msg-content :deep(.code-action-btn:hover) {
+  background: #4d4d4d;
+  color: #fff;
+}
+
+.msg-content :deep(.code-action-btn.run) {
+  background: var(--el-color-primary);
+  color: #fff;
+}
+
+.msg-content :deep(.code-action-btn.run:hover) {
+  background: var(--el-color-primary-light-3);
+}
+
+.msg-content :deep(.code-block) {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  background: #1e1e1e;
+}
+
+.msg-content :deep(.code-block code) {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #d4d4d4;
+  white-space: pre;
+}
+
+/* 代码高亮颜色 */
+.msg-content :deep(.code-block .language-python) {
+  color: #d4d4d4;
 }
 </style>

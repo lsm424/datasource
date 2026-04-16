@@ -12,6 +12,7 @@ from app.api.endpoints import (
     datasource_all_data,
     roles,
     analyze,
+    code_execute,
 )
 
 # 创建API路由器
@@ -29,3 +30,4 @@ api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboar
 api_router.include_router(system_status.router, prefix="/system", tags=["system"])
 api_router.include_router(roles.router, prefix="/roles", tags=["roles"])
 api_router.include_router(analyze.router, prefix="/analyze", tags=["analyze"])
+api_router.include_router(code_execute.router, prefix="/code", tags=["code_execute"])

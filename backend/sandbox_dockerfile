@@ -1,0 +1,54 @@
+FROM python:3.11-slim
+
+LABEL maintainer="sandbox-user"
+LABEL description="Python sandbox with matplotlib - read-only friendly"
+
+# 设置环境变量
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# 安装系统依赖和字体
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        fonts-dejavu \
+        fonts-wqy-zenhei \
+        fonts-wqy-microhei \
+        && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+
+# 安装 Python 科学计算包
+RUN pip install --no-cache-dir \
+    --index-url https://repo.huaweicloud.com/repository/pypi/simple/ \
+    matplotlib numpy pandas scikit-learn
+
+# 创建 matplotlib 配置目录和文件
+RUN mkdir -p /etc/matplotlib && \
+    echo "backend: Agg" > /etc/matplotlib/matplotlibrc && \
+    echo "font.family: sans-serif" >> /etc/matplotlib/matplotlibrc && \
+    echo "font.sans-serif: DejaVu Sans, WenQuanYi Zen Hei, WenQuanYi Micro Hei" >> /etc/matplotlib/matplotlibrc && \
+    echo "axes.unicode_minus: False" >> /etc/matplotlib/matplotlibrc && \
+    echo "savefig.dpi: 100" >> /etc/matplotlib/matplotlibrc && \
+    echo "figure.dpi: 100" >> /etc/matplotlib/matplotlibrc
+
+# 创建非 root 用户并预设配置目录
+RUN useradd -m -u 1000 sandbox && \
+    mkdir -p /home/sandbox/.config/matplotlib && \
+    mkdir -p /home/sandbox/.cache/matplotlib && \
+    cp /etc/matplotlib/matplotlibrc /home/sandbox/.config/matplotlib/ && \
+    chown -R sandbox:sandbox /home/sandbox
+
+# 设置环境变量（关键！）
+ENV MPLCONFIGDIR=/home/sandbox/.config/matplotlib \
+    MPL_CACHEDIR=/home/sandbox/.cache/matplotlib \
+    HOME=/home/sandbox \
+    TMPDIR=/tmp
+
+# 切换到非 root 用户
+USER sandbox
+WORKDIR /home/sandbox
+
+# 预运行一次 matplotlib 生成缓存
+RUN python -c "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; print('✓ Matplotlib configured successfully')"
