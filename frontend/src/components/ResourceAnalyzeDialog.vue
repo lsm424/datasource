@@ -458,4 +458,13 @@ function onClosed() {
 .msg-content :deep(.code-block .language-python) {
   color: #d4d4d4;
 }
+
+/* 图片样式：限制最大宽度，防止溢出 */
+.msg-content :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  display: block;
+  margin: 8px 0;
+}
 </style>

@@ -20,3 +20,6 @@ uvicorn==0.44.0
 pydantic[email]
 minio
 python-multipart
+langchain
+langchain_openai
+docker

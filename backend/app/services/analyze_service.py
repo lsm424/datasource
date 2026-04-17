@@ -9,8 +9,14 @@ import json
 import logging
 import tempfile
 import uuid
-from typing import Generator, Dict, Any, List
-
+import asyncio
+from datetime import datetime
+from typing import Generator, Dict, Any, List, Optional
+from pathlib import Path
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+from langchain.agents import create_agent
+from langchain.tools import tool
 from sqlalchemy.orm import Session
 
 from app.models.datasource import DataSource, DataSourceType
@@ -27,8 +33,156 @@ model = getattr(settings, "OPENAI_MODEL", None) or getattr(settings, "OLLAMA_MOD
 api_key = getattr(settings, "OPENAI_API_KEY", None) or "dummy"
 client = OpenAI(base_url=base_url, api_key=api_key)
 logger.info(f"OpenAI 客户端初始化，模型={model}，API_KEY={api_key}, BASE_URL={base_url}")
+
+
+# 图表存储配置
+CHARTS_DIR = Path(settings.STATIC_FILES_DIRECTORY) / "charts"
+CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+CHARTS_URL_PREFIX = "/static/charts"
     
 VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+
+
+# ==================== 工具定义 ====================
+@tool
+def generate_trend_chart(csv_data: str, time_column: str, value_columns: List[str], title: Optional[str] = "数据趋势图") -> str:
+    """
+    根据CSV数据生成多曲线趋势图，保存为文件并返回可访问的URL。
+
+    Args:
+        csv_data: CSV格式的数据字符串，包含表头
+        time_column: 时间列的列名，作为横轴
+        value_columns: 数值列的列名列表，作为纵轴（支持多列）
+        title: 图表标题，默认为"数据趋势图"
+
+    Returns:
+        Markdown格式的图片标签，如：![趋势图](/static/charts/trend_xxx.png)
+    """
+    logger.info(f"开始生成趋势图，数据长度={len(csv_data)}，时间列={time_column}，数值列={value_columns}，标题={title}")
+    try:
+        import pandas as pd
+        import matplotlib
+        matplotlib.use('Agg')  # 使用非交互式后端
+        import matplotlib.pyplot as plt
+
+        # 解析CSV数据
+        import io
+        df = pd.read_csv(io.StringIO(csv_data))
+
+        # 检查列是否存在
+        if time_column not in df.columns:
+            return f"错误：时间列 '{time_column}' 不存在于数据中。可用列：{list(df.columns)}"
+
+        missing_cols = [col for col in value_columns if col not in df.columns]
+        if missing_cols:
+            return f"错误：以下数值列不存在于数据中：{missing_cols}。可用列：{list(df.columns)}"
+
+        # 创建图表
+        plt.figure(figsize=(12, 6))
+
+        # 绘制每条曲线
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
+        for i, col in enumerate(value_columns):
+            color = colors[i % len(colors)]
+            plt.plot(df[time_column], df[col], marker='o', linewidth=2,
+                    markersize=4, label=col, color=color)
+
+        # 设置图表样式
+        plt.title(title, fontsize=16, fontweight='bold', pad=20)
+        plt.xlabel(time_column, fontsize=12)
+        plt.ylabel('数值', fontsize=12)
+        plt.legend(loc='best', fontsize=10)
+        plt.grid(True, alpha=0.3, linestyle='--')
+        plt.xticks(rotation=45)
+
+        # 自动调整布局
+        plt.tight_layout()
+
+        # 生成文件名并保存
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"trend_{timestamp}_{uuid.uuid4().hex[:8]}.png"
+        filepath = CHARTS_DIR / filename
+        plt.savefig(filepath, format='png', dpi=150, bbox_inches='tight')
+        plt.close()
+
+        # 返回Markdown格式的图片URL
+        image_url = f"{CHARTS_URL_PREFIX}/{filename}"
+        logger.info(f"生成趋势图成功，URL: {image_url}")
+        return f"![{title}]({image_url})"
+
+    except Exception as e:
+        logger.exception("生成趋势图失败")
+        return f"生成趋势图时发生错误：{str(e)}"
+
+# CSV分析工具列表
+CSV_TOOLS = [generate_trend_chart]
+
+
+# ==================== LangChain LLM 服务 ====================
+
+class LLMAnalyzeService:
+    """基于 LangChain 的 LLM 分析服务，支持工具调用"""
+
+    def __init__(self, tools=None):
+        """
+        初始化 LLM 分析服务
+        :param tools: 工具列表，默认为空列表
+        """
+        self.tools = tools or []
+        # 初始化 LangChain ChatOpenAI
+        self.llm = ChatOpenAI(
+            model=model or "gpt-4",
+            base_url=base_url,
+            api_key=api_key or "dummy",
+            temperature=0.2,
+        )
+        self.agent = create_agent(
+            self.llm,
+            self.tools,
+        )
+        logger.info(f"LangChain Agent 创建成功，工具数量: {len(self.tools)}")
+
+    def _convert_messages(self, messages: list) -> list:
+        """将字典格式的消息转换为 LangChain 消息对象"""
+        langchain_messages = []
+        for msg in messages:
+            role = msg.get('role')
+            content = msg.get('content', '')
+            if role == 'system':
+                langchain_messages.append(SystemMessage(content=content))
+            elif role == 'user':
+                langchain_messages.append(HumanMessage(content=content))
+            elif role == 'assistant':
+                langchain_messages.append(AIMessage(content=content))
+        return langchain_messages
+
+    def chat_stream(self, messages: list):
+        """
+        流式对话
+        :param messages: 消息列表
+        :return: 生成器，逐段返回响应内容
+        """
+        langchain_messages = self._convert_messages(messages)
+
+        try:
+            # 如果有工具，使用 Agent 进行流式调用
+            if self.tools:
+                # 使用 stream + stream_mode="messages" 实现 token 级流式输出
+                for msg_chunk, metadata in self.agent.stream(
+                    {"messages": langchain_messages},
+                    stream_mode="messages"
+                ):
+                    # msg_chunk 是消息片段，包含 token 内容
+                    if hasattr(msg_chunk, 'content') and msg_chunk.content:
+                        yield msg_chunk.content
+            else:
+                # 无工具时直接使用 LLM 流式输出，实现真正的逐 token 流式
+                for chunk in self.llm.stream(langchain_messages):
+                    if chunk.content:
+                        yield chunk.content
+        except Exception as e:
+            logger.exception("LangChain 流式调用失败")
+            yield f"[错误: {e}]"
 
 
 def _parse_config(config):
@@ -142,30 +296,29 @@ def _summarize_visual_with_llm(image_b64: str, kind: str) -> str:
         return f"{kind}预览图，但在解析时发生错误：{e}"
 
 
-def _chat_with_llm(messages: list, stream=False) -> str:
+def _chat_with_llm(messages: list, stream=False, tools=None):
+    """
+    使用 LLMAnalyzeService 调用大模型（保留子线程逻辑）
+    :param stream: 是否流式返回
+    :param tools: 工具列表，用于 CSV 分析等场景
+    """
     result_q = queue.Queue()
+
     def _llm():
         try:
-            # 使用流式接口获取描述内容
-            resp = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.2,
-                stream=stream,
-            )
-            if stream:
-                for chunk in resp:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-                    if delta and getattr(delta, "content", None):
-                        part = delta.content
-                        result_q.put(part)
-            else:
-                choice = resp.choices[0] if resp.choices else None
-                content = getattr(getattr(choice, "message", None), "content", None)
-                result_q.put(content)
+            llm_service = LLMAnalyzeService(tools=tools or [])
+            full_chunks = []
+            for chunk in llm_service.chat_stream(messages):
+                if chunk:
+                    if stream:
+                        result_q.put(chunk)
+                    else:
+                        full_chunks.append(chunk)
+            if not stream:
+                result_q.put("".join(full_chunks))
         except Exception as e:
-            logger.exception("多模态预览总结失败")
-            result_q.put(f"解析时发生错误：{e}")
+            logger.exception("LLMAnalyzeService 调用失败")
+            result_q.put(f"[错误: {e}]")
         result_q.put(True)
 
     threading.Thread(target=_llm, daemon=True).start()
@@ -178,7 +331,11 @@ def _chat_with_llm(messages: list, stream=False) -> str:
 
         if r == True:
             break
-        yield r
+        if stream:
+            yield r
+        else:
+            yield r
+            break
 
 def _get_resource_content_fs(db: Session, datasource_id: str, path: str) -> Dict[str, Any]:
     """文件系统：读取文件内容，文本 / 图片 / 视频预览"""
@@ -402,6 +559,9 @@ def chat_stream(
     history = get_messages(db, session_id, user_id)
     openai_messages: List[Dict[str, Any]] = []
 
+    # 初始化 res_type，用于后续判断是否需要使用 CSV 工具
+    res_type = "text"
+
     # 1）仅首轮注入带资源内容的 system 提示（同时写入数据库，但前端不展示）
     if len(history) == 0:
         # 获取资源内容（用于首轮 system 提示）
@@ -458,6 +618,17 @@ def chat_stream(
                 "请将其视为表格数据，列为字段、行为记录，可以做统计、分组、趋势对比等分析。"
                 "回答时尽量引用具体列名和数值，不要捏造不存在的列或行。"
             )
+            # CSV 场景添加工具说明
+            extra += (
+                "\n\n【可用工具】\n"
+                "当用户要求生成趋势图、可视化数据、绘制图表时，请调用 generate_trend_chart 工具。\n"
+                "工具参数说明：\n"
+                "- csv_data: CSV数据字符串（使用上面的【资源内容】中的数据）\n"
+                "- time_column: 时间列名（如 'Year'）\n"
+                "- value_columns: 数值列名列表（如 ['Mean'] 或 ['5%', 'Mean', '95%']）\n"
+                "- title: 图表标题\n"
+                "工具会返回 Markdown 格式的图片链接，直接嵌入到回复中即可。"
+            )
         elif res_type == "db_table":
             type_desc = "数据库表数据（前 100 行样本）"
             extra = (
@@ -513,41 +684,49 @@ def chat_stream(
     db.add(user_msg)
     db.commit()
 
-    # OpenAI 兼容接口流式调用
-    logger.info(f"OpenAI 客户端初始化，模型={model}， BASE_URL={base_url}")
+    # 非首轮对话时，需要查询会话获取资源类型以判断是否使用 CSV 工具
+    if len(history) > 0:
+        session = (
+            db.query(ResourceChatSession)
+            .filter(
+                ResourceChatSession.id == session_id,
+                ResourceChatSession.user_id == user_id,
+            )
+            .first()
+        )
+        if session:
+            try:
+                for resource_content in get_resource_content(db, session.resource_key):
+                    if resource_content != "":
+                        res_type = resource_content.get("type", "text")
+                        break
+            except Exception as e:
+                logger.warning("非首轮获取资源类型失败: %s", e)
+
     logger.info("openai_messages: %s", openai_messages)
+    # 全部场景使用 LangChain Agent
+    # CSV 场景使用 csv_tools，其他场景不使用工具
+    tools = CSV_TOOLS if res_type == "csv" else []
+
     full: List[str] = []
+
+    # 使用 _chat_with_llm 进行流式对话
+    logger.info(f"使用 _chat_with_llm，模型={model}，BASE_URL={base_url}，工具数={len(tools)}")
     try:
-        for chunk in _chat_with_llm(openai_messages, True):
-            if chunk != '':
+        for chunk in _chat_with_llm(openai_messages, True, tools=tools):
+            if chunk:
                 full.append(chunk)
             yield chunk
-
-        # stream = client.chat.completions.create(
-        #     model=model,
-        #     messages=openai_messages,
-        #     temperature=0.3,
-        #     stream=True,
-        # )
-        # for idx, chunk in enumerate(stream):
-        #     delta = chunk.choices[0].delta if chunk.choices else None
-        #     if delta and getattr(delta, "content", None):
-        #         part = delta.content
-        #         full.append(part)
-        #         yield part
-        #     elif idx % 100 == 0:
-        #         # 心跳包：空字符串（前端收到后会忽略），用于保持连接活跃
-        #         yield ""
     except GeneratorExit:
-        # 客户端断开导致生成器被 close()，正常退出，不记日志
         raise
-    except BaseException as e:
-        logger.exception("OpenAI 兼容接口流式调用失败")
+    except Exception as e:
+        logger.exception("_chat_with_llm 调用失败")
         yield f"\n\n[错误: {e}]"
         full = [str(e)]
 
     # 保存助手回复
     assistant_content = "".join(full)
+    logger.info(f'助手回复: {assistant_content}')
     assistant_msg = ResourceChatMessage(
         id=str(uuid.uuid4()),
         session_id=session_id,
