@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     
     # 数据库配置
     DATABASE_URL: str = Field(
-        default="sqlite:///./data-browser.db", 
+        default="sqlite:///./data/data-browser.db", 
         env="DATABASE_URL",
         description="数据库连接字符串"
     )

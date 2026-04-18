@@ -53,7 +53,7 @@ Thumbs.db
 logs/
 
 # Database
-# *.db
+*.db
 *.sqlite3
 
 # Environment variables

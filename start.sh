@@ -5,6 +5,10 @@
 
 set -e
 
+# 禁用 Git Bash 的路径转换（Windows 环境）
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL="*"
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,16 +25,20 @@ NETWORK_NAME="data-browser-network"
 
 # 端口配置
 BACKEND_PORT=8000
-FRONTEND_PORT=5175
+FRONTEND_PORT=5173
 
 echo -e "${BLUE}================================${NC}"
 echo -e "${BLUE}  数据浏览器系统 Docker 启动脚本${NC}"
 echo -e "${BLUE}================================${NC}"
 echo ""
 
-# 获取脚本所在目录的绝对路径
+# 获取脚本所在目录的绝对路径（兼容 Windows Git Bash）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+# 如果是 Windows 环境，转换为 Windows 路径格式
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    SCRIPT_DIR=$(cygpath -w "$SCRIPT_DIR")
+fi
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # 函数：检查并停止运行的容器
 stop_running_containers() {
@@ -119,6 +127,8 @@ start_backend() {
         -v "$SCRIPT_DIR/backend/data:/app/data" \
         -v "$SCRIPT_DIR/backend/logs:/app/logs" \
         -v "$SCRIPT_DIR/backend/static:/app/static" \
+        -e STATIC_FILES_DIRECTORY=/app/static \
+        -e DATABASE_URL=sqlite:///./data/data-browser.db \
         --restart unless-stopped \
         "$BACKEND_IMAGE:latest"
     
@@ -191,10 +201,10 @@ main() {
         exit 1
     fi
     
-    stop_running_containers
     create_network
     build_backend
     build_frontend
+    stop_running_containers
     start_backend
     start_frontend
     wait_for_services

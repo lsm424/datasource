@@ -23,3 +23,4 @@ python-multipart
 langchain
 langchain_openai
 docker
+matplotlib==3.9.0
