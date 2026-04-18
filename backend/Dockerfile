@@ -6,35 +6,22 @@ WORKDIR /app
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV POETRY_NO_INTERACTION=1
-ENV POETRY_VENV_IN_PROJECT=1
 
-# 安装系统依赖
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        gcc \
-        g++ \
-        make \
-        libpq-dev \
-        libmagic1 \
-        curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# 安装Poetry
-RUN pip install poetry
+# 安装系统依赖（编译Python包所需）
+# RUN apt-get update \
+#     && apt-get install -y --no-install-recommends \
+#         gcc \
+#         g++ \
+#         make \
+#         libpq-dev \
+#         curl \
+#     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件
-COPY pyproject.toml poetry.lock* ./
-
-# 如果没有poetry.lock，先复制requirements.txt
 COPY requirements.txt ./
 
 # 安装Python依赖
-RUN if [ -f pyproject.toml ]; then \
-        poetry install --no-dev; \
-    else \
-        pip install --no-cache-dir -r requirements.txt; \
-    fi
+RUN pip install --no-cache-dir -r requirements.txt -i https://repo.huaweicloud.com/repository/pypi/simple/
 
 # 复制应用代码
 COPY . .
@@ -43,7 +30,7 @@ COPY . .
 RUN mkdir -p /app/data /app/logs /app/static
 
 # 设置权限
-RUN chmod +x /app/scripts/* || true
+RUN chmod +x /app/scripts/* 2>/dev/null || true
 
 # 暴露端口
 EXPOSE 8000
