@@ -1,27 +1,7 @@
-FROM python:3.11-slim
-
-# 设置工作目录
-WORKDIR /app
-
-# 设置环境变量
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# 安装系统依赖（编译Python包所需）
-# RUN apt-get update \
-#     && apt-get install -y --no-install-recommends \
-#         gcc \
-#         g++ \
-#         make \
-#         libpq-dev \
-#         curl \
-#     && rm -rf /var/lib/apt/lists/*
-
-# 复制依赖文件
-COPY requirements.txt ./
-
-# 安装Python依赖
-RUN pip install --no-cache-dir -r requirements.txt -i https://repo.huaweicloud.com/repository/pypi/simple/
+# 应用镜像 Dockerfile
+# 基于预构建的基础镜像，只包含应用代码
+FROM data-browser-backend-base:latest
+# docker build -f Dockerfile.base -t data-browser-backend-base:latest .
 
 # 复制应用代码
 COPY . .

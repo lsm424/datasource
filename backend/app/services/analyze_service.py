@@ -1,6 +1,7 @@
 """
 资源分析服务：获取资源内容 + OpenAI 兼容接口流式对话
 """
+import traceback
 import threading
 import queue
 import base64
@@ -18,14 +19,21 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, Tool
 from langchain.agents import create_agent
 from langchain.tools import tool
 from sqlalchemy.orm import Session
-
+from pydantic import Field, BaseModel
 from app.models.datasource import DataSource, DataSourceType
 from app.models.resource_chat import ResourceChatSession, ResourceChatMessage
 from app.core.config import settings
+import matplotlib.pyplot as plt
+import matplotlib
+import os
+import math
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
-from openai import OpenAI
+plt.rcParams['font.sans-serif'] = ['SimHei']  # 指定默认字体
+# 解决负号显示问题
+plt.rcParams['axes.unicode_minus'] = False
 
 # 优先使用 OPENAI_BASE_URL/OPENAI_MODEL，其次回退到 OLLAMA 的 /v1 代理
 base_url = settings.OPENAI_BASE_URL or (settings.OLLAMA_BASE_URL.rstrip("/") + "/v1")
@@ -44,74 +52,116 @@ VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".webm")
 
 
 # ==================== 工具定义 ====================
+class PlotGroup(BaseModel):
+    title: str = Field(description="图表标题")
+    xlabel: str = Field(description="X轴名称")
+    ylabel: str = Field(description="Y轴名称")
+    x: List[str] = Field(description="x轴数据")
+    y: dict[str, List[float]] = Field(description="y轴数据，key为曲线名称，value为y轴数据, 各数组的长度必须和x字段的长度相同")
+
+
 @tool
-def generate_trend_chart(csv_data: str, time_column: str, value_columns: List[str], title: Optional[str] = "数据趋势图") -> str:
+def generate_trend_chart(plot_groups: List[PlotGroup]) -> str:
     """
-    根据CSV数据生成多曲线趋势图，保存为文件并返回可访问的URL。
-
-    Args:
-        csv_data: CSV格式的数据字符串，包含表头
-        time_column: 时间列的列名，作为横轴
-        value_columns: 数值列的列名列表，作为纵轴（支持多列）
-        title: 图表标题，默认为"数据趋势图"
-
+    自动绘制：单张/多张曲线图，支持多条曲线同图、多组数据分图
+    输入格式：
+    [
+        {
+            "title": "图表标题",
+            "xlabel": "X轴名称",
+            "ylabel": "Y轴名称",
+            "x": ["x轴标签1", "x轴标签2", ...],
+            "y": {"曲线1名称": [y轴数值1, y轴数值2, ...], "曲线2名称": [y轴数值1, y轴数值2, ...]}
+        }
+    ]
     Returns:
         Markdown格式的图片标签，如：![趋势图](/static/charts/trend_xxx.png)
     """
-    logger.info(f"开始生成趋势图，数据长度={len(csv_data)}，时间列={time_column}，数值列={value_columns}，标题={title}")
+    logger.info(f"开始生成趋势图，数据长度={len(plot_groups)}")
     try:
-        import pandas as pd
-        import matplotlib
-        matplotlib.use('Agg')  # 使用非交互式后端
-        import matplotlib.pyplot as plt
-
-        # 解析CSV数据
-        import io
-        df = pd.read_csv(io.StringIO(csv_data))
-
-        # 检查列是否存在
-        if time_column not in df.columns:
-            return f"错误：时间列 '{time_column}' 不存在于数据中。可用列：{list(df.columns)}"
-
-        missing_cols = [col for col in value_columns if col not in df.columns]
-        if missing_cols:
-            return f"错误：以下数值列不存在于数据中：{missing_cols}。可用列：{list(df.columns)}"
-
-        # 创建图表
-        plt.figure(figsize=(12, 6))
-
-        # 绘制每条曲线
+        matplotlib.use('Agg')  # 使用非交互式后端        
+        
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
-        for i, col in enumerate(value_columns):
-            color = colors[i % len(colors)]
-            plt.plot(df[time_column], df[col], marker='o', linewidth=2,
-                    markersize=4, label=col, color=color)
 
-        # 设置图表样式
-        plt.title(title, fontsize=16, fontweight='bold', pad=20)
-        plt.xlabel(time_column, fontsize=12)
-        plt.ylabel('数值', fontsize=12)
-        plt.legend(loc='best', fontsize=10)
-        plt.grid(True, alpha=0.3, linestyle='--')
-        plt.xticks(rotation=45)
+        n_groups = len(plot_groups)
+        if n_groups == 0:
+            return "没有数据需要绘制"
 
-        # 自动调整布局
+        # 计算子图布局：尽量保持正方形布局
+        n_cols = math.ceil(math.sqrt(n_groups))
+        n_rows = math.ceil(n_groups / n_cols)
+
+        # 创建大图和子图
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 5*n_rows))
+
+        # 如果只有一个子图，axes不是数组，需要转换
+        if n_groups == 1:
+            axes = [[axes]]
+        elif n_rows == 1:
+            axes = [axes]
+
+        # 展平axes便于迭代
+        axes_flat = [ax for row in axes for ax in row]
+
+        for idx, group in enumerate(plot_groups):
+            ax = axes_flat[idx]
+            title = group.title
+            x = group.x
+            y = group.y
+            xlabel = group.xlabel
+            ylabel = group.ylabel
+
+            for i, label in enumerate(y.keys()):
+                color = colors[i % len(colors)]
+                lenght = min(len(x), len(y[label]))
+                ax.plot(x[:lenght], y[label][:lenght], marker='o', linewidth=2,
+                        markersize=4, label=label, color=color)
+            # 设置文本时优先使用 font_prop
+            
+            ax.set_title(title, fontsize=14, fontweight='bold', pad=10)
+            ax.set_xlabel(xlabel, fontsize=10)
+            ax.set_ylabel(ylabel, fontsize=10)
+            ax.legend(loc='best', fontsize=9)
+            ax.grid(True, alpha=0.3, linestyle='--')
+            
+            # 优化 X 轴标签显示：如果数据点过多，自动调整显示间隔
+            x_data_count = len(x)
+            if x_data_count > 20:
+                # 数据点过多时，计算合适的间隔
+                # 目标：X轴上显示约 10-15 个标签
+                target_ticks = 12
+                step = max(1, x_data_count // target_ticks)
+                
+                # 设置刻度位置
+                tick_positions = list(range(0, x_data_count, step))
+                tick_labels = [x[i] for i in tick_positions]
+                
+                ax.set_xticks(tick_positions)
+                ax.set_xticklabels(tick_labels, rotation=45, ha='right')
+                logger.info(f"X轴数据点过多({x_data_count}个)，自动调整显示间隔为每{step}个显示一个标签")
+            elif x_data_count > 10:
+                # 数据点较多时，旋转标签避免重叠
+                ax.tick_params(axis='x', rotation=45)
+
+        # 隐藏多余的子图
+        for idx in range(n_groups, len(axes_flat)):
+            axes_flat[idx].set_visible(False)
+
         plt.tight_layout()
 
-        # 生成文件名并保存
+        # 返回Markdown格式的图片URL
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"trend_{timestamp}_{uuid.uuid4().hex[:8]}.png"
-        filepath = CHARTS_DIR / filename
+        filepath = os.path.join(CHARTS_DIR, filename)
         plt.savefig(filepath, format='png', dpi=150, bbox_inches='tight')
         plt.close()
-
-        # 返回Markdown格式的图片URL
         image_url = f"{CHARTS_URL_PREFIX}/{filename}"
         logger.info(f"生成趋势图成功，URL: {image_url}")
         return f"![{title}]({image_url})"
 
     except Exception as e:
         logger.exception("生成趋势图失败")
+        logger.error(traceback.format_exc())
         return f"生成趋势图时发生错误：{str(e)}"
 
 # CSV分析工具列表
@@ -174,7 +224,12 @@ class LLMAnalyzeService:
                 ):
                     # msg_chunk 是消息片段，包含 token 内容
                     if hasattr(msg_chunk, 'content') and msg_chunk.content:
-                        yield msg_chunk.content
+                        content = msg_chunk.content
+                        # 过滤掉工具调用错误信息，不让用户看到
+                        if self._is_tool_error_message(content):
+                            logger.warning(f"过滤工具错误信息: {content}...")
+                            continue
+                        yield content
             else:
                 # 无工具时直接使用 LLM 流式输出，实现真正的逐 token 流式
                 for chunk in self.llm.stream(langchain_messages):
@@ -183,6 +238,25 @@ class LLMAnalyzeService:
         except Exception as e:
             logger.exception("LangChain 流式调用失败")
             yield f"[错误: {e}]"
+
+    def _is_tool_error_message(self, content: str) -> bool:
+        """检查内容是否是工具调用错误信息或重试相关内容"""
+        if not content:
+            return False
+        # 检查是否包含工具调用错误、重试、或格式错误的特征
+        error_patterns = [
+            "error invoking tool",
+            "plot_groups.",
+            "field required",
+            "input should be a valid",
+            "please fix the error",
+            "try again",
+            "kwargs",
+            "'y':",
+            "placeholder",
+        ]
+        content_lower = content.lower()
+        return any(pattern in content_lower for pattern in error_patterns)
 
 
 def _parse_config(config):
@@ -617,17 +691,56 @@ def chat_stream(
             extra = (
                 "请将其视为表格数据，列为字段、行为记录，可以做统计、分组、趋势对比等分析。"
                 "回答时尽量引用具体列名和数值，不要捏造不存在的列或行。"
+                "调用工具时，同一个工具同一套参数不要重复调用；回答内容中不要重复显示同一张图"
             )
             # CSV 场景添加工具说明
             extra += (
                 "\n\n【可用工具】\n"
-                "当用户要求生成趋势图、可视化数据、绘制图表时，请调用 generate_trend_chart 工具。\n"
-                "工具参数说明：\n"
-                "- csv_data: CSV数据字符串（使用上面的【资源内容】中的数据）\n"
-                "- time_column: 时间列名（如 'Year'）\n"
-                "- value_columns: 数值列名列表（如 ['Mean'] 或 ['5%', 'Mean', '95%']）\n"
-                "- title: 图表标题\n"
-                "工具会返回 Markdown 格式的图片链接，直接嵌入到回复中即可。"
+                + """当用户要求生成趋势图/曲线图/图表相关意图时，请调用 generate_trend_chart 工具。
+你的任务：
+1. 分析数据结构、列名、单位、数值类型。
+2. 判断是否应该绘制在一张图中，还是分多张图。
+   判定逻辑：
+   - 若多个序列单位相同、维度一致 → 合图（只生成一个PlotGroup，在y中包含多条曲线）
+   - 若单位不同、数量级差异巨大 → 分图（生成多个PlotGroup，每个一个子图）
+3. 将数据拆分为一组或多组曲线组，生成如下json参数给工具调用（列表中一个PlotGroup对象对应一张子图）：
+[
+    {
+        "title": "图表标题",
+        "xlabel": "X轴名称",
+        "ylabel": "Y轴名称",
+        "x": ["x轴标签1", "x轴标签2", ...],
+        "y": {"曲线1名称": [y轴数值1, y轴数值2, ...], "曲线2名称": [y轴数值1, y轴数值2, ...]}
+    }
+]
+
+【最关键！】格式要求（请严格遵守）：
+- 给工具调用的参数务必是合法且完整的JSON格式，不要添加注释
+- 只生成一个完整的JSON数组，数组中的每个元素都必须是一个完整的字典对象
+- 不要生成不完整的元素（如只有 '}, {'] 这种片段）
+- 不要有任何额外的内容，只给工具调用参数
+- 工具调用成功后，工具会自动返回图片标签，你不需要在回答中再次添加图片标签
+- 必须一次性生成正确的工具参数调用格式，确保每个PlotGroup对象都包含 title, xlabel, ylabel, x, y 五个字段，不要遗漏任何字段
+- y字段是字典，字典的每个value都是数值数组，各数组的长度必须和x字段的长度相同
+- 【非常重要！】确保每个曲线的数据点数量严格等于x轴标签数量，否则绘图会失败
+- 请仔细核对每个曲线的数据点数量，确保与x轴完全一致
+- 如果x轴有N个标签，那么每个曲线也必须有N个数据点
+
+【示例】假设CSV数据包含三列：年份、销售额、利润，用户要求生成趋势图：
+- 正确做法（合图，单位相同）：
+[
+    {
+        "title": "年度销售与利润趋势",
+        "xlabel": "年份",
+        "ylabel": "金额（万元）",
+        "x": ["2020", "2021", "2022", "2023"],
+        "y": {
+            "销售额": [100, 120, 150, 180],
+            "利润": [20, 25, 35, 45]
+        }
+    }
+]
+"""
             )
         elif res_type == "db_table":
             type_desc = "数据库表数据（前 100 行样本）"

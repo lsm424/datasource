@@ -1,0 +1,27 @@
+# 基础镜像 Dockerfile
+# 构建命令: docker build -f Dockerfile.base -t data-browser-backend-base:latest .
+FROM python:3.11-slim
+
+# 设置环境变量
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# 安装系统依赖和中文字体（最耗时的操作）
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        vim \ 
+        wget \
+        curl \
+        fontconfig \
+    && fc-cache -fv \
+    && rm -rf /var/lib/apt/lists/* && rm -rf ~/.cache/matplotlib \
+    && wget -O /usr/share/fonts/SimHei.ttf https://zihao-openmmlab.obs.cn-east-3.myhuaweicloud.com/20220716-mmclassification/dataset/SimHei.ttf
+
+# 创建应用目录
+WORKDIR /app
+
+# 复制依赖文件并安装 Python 包（依赖变动较少）
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -i https://repo.huaweicloud.com/repository/pypi/simple/
+
+# 基础镜像构建完成，不包含应用代码
