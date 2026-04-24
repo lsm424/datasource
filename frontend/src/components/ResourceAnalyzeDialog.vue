@@ -5,6 +5,7 @@
     width="900px"
     class="resource-analyze-dialog"
     destroy-on-close
+    align-center
     @closed="onClosed"
   >
     <div class="analyze-body">
@@ -276,6 +277,11 @@ function onClosed() {
   border: 1px solid var(--el-border-color);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  margin: 0 !important;
 }
 .resource-analyze-dialog :deep(.el-dialog__header) {
   border-bottom: 1px solid var(--el-border-color-lighter);
@@ -289,7 +295,8 @@ function onClosed() {
 .analyze-body {
   display: flex;
   flex-direction: column;
-  min-height: 360px;
+  min-height: 540px;
+  max-height: 58vh;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 12px;
@@ -297,8 +304,8 @@ function onClosed() {
 }
 .messages {
   flex: 1;
-  min-height: 200px;
-  max-height: 400px;
+  min-height: 450px;
+  max-height: 48vh;
   overflow-y: auto;
   padding: 8px 0;
 }
