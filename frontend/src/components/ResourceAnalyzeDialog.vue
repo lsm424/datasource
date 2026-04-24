@@ -2,7 +2,7 @@
   <el-dialog
     v-model="dialogVisible"
     :title="`AI对话：${resourceDisplayName}`"
-    width="720px"
+    width="1400px"
     class="resource-analyze-dialog"
     destroy-on-close
     @closed="onClosed"
@@ -288,7 +288,7 @@ function onClosed() {
 .analyze-body {
   display: flex;
   flex-direction: column;
-  min-height: 360px;
+  min-height: 700px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 12px;
@@ -296,8 +296,8 @@ function onClosed() {
 }
 .messages {
   flex: 1;
-  min-height: 200px;
-  max-height: 400px;
+  min-height: 500px;
+  max-height: 750px;
   overflow-y: auto;
   padding: 8px 0;
 }

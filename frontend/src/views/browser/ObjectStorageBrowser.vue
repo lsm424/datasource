@@ -449,6 +449,53 @@
           <div class="excel-content" v-html="previewContent"></div>
         </div>
         
+        <!-- NC文件预览 -->
+        <div v-else-if="previewType === 'nc'" class="nc-preview">
+          <div v-if="currentPreviewObject.ncInfo?.loading" class="nc-loading">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>正在加载NC文件信息...</span>
+          </div>
+          <div v-else-if="currentPreviewObject.ncInfo?.error" class="nc-error">
+            <el-result icon="error" title="加载失败" :sub-title="currentPreviewObject.ncInfo.error" />
+          </div>
+          <div v-else class="nc-content">
+            <div class="nc-toolbar">
+              <el-tag size="small" type="success">NetCDF文件</el-tag>
+              <el-tag size="small" v-if="currentPreviewObject.ncVariable">{{ currentPreviewObject.ncVariable }}</el-tag>
+              <el-tag size="small">{{ formatFileSize(currentPreviewObject.ncInfo?.fileSize || 0) }}</el-tag>
+            </div>
+            <div v-if="currentPreviewObject.ncImage" class="nc-image">
+              <img :src="currentPreviewObject.ncImage" alt="NC文件可视化" />
+            </div>
+            <div v-if="currentPreviewObject.ncStats" class="nc-stats">
+              <el-descriptions :column="4" border>
+                <el-descriptions-item label="最小值">{{ currentPreviewObject.ncStats.min?.toFixed(4) }}</el-descriptions-item>
+                <el-descriptions-item label="最大值">{{ currentPreviewObject.ncStats.max?.toFixed(4) }}</el-descriptions-item>
+                <el-descriptions-item label="平均值">{{ currentPreviewObject.ncStats.mean?.toFixed(4) }}</el-descriptions-item>
+                <el-descriptions-item label="维度">{{ currentPreviewObject.ncStats.shape?.join(' x ') }}</el-descriptions-item>
+              </el-descriptions>
+            </div>
+            <div v-if="currentPreviewObject.ncInfo?.dimensions" class="nc-dimensions">
+              <h4>维度信息</h4>
+              <el-tag v-for="(value, key) in currentPreviewObject.ncInfo.dimensions" :key="key" size="small" style="margin-right: 8px; margin-bottom: 4px;">
+                {{ key }}: {{ value }}
+              </el-tag>
+            </div>
+            <div v-if="currentPreviewObject.ncInfo?.variables" class="nc-variables">
+              <h4>变量列表</h4>
+              <el-table :data="currentPreviewObject.ncInfo.variables" size="small" max-height="200">
+                <el-table-column prop="name" label="变量名" width="120" />
+                <el-table-column prop="shape" label="形状" width="150">
+                  <template #default="{ row }">
+                    {{ row.shape.join(' x ') }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="dtype" label="数据类型" width="100" />
+              </el-table>
+            </div>
+          </div>
+        </div>
+        
         <!-- PDF预览 -->
         <div v-else-if="previewType === 'pdf'" class="pdf-preview">
           <iframe 
@@ -565,7 +612,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Box, FolderOpened, Document, Delete, Download, InfoFilled, CopyDocument,
-  Picture, VideoPlay, Lock, Folder, DataLine, ChatDotRound
+  Picture, VideoPlay, Lock, Folder, DataLine, ChatDotRound, Loading
 } from '@element-plus/icons-vue'
 import ResourceAnalyzeDialog from '@/components/ResourceAnalyzeDialog.vue'
 import { useDataSourceStore } from '@/stores/datasource'
@@ -1284,14 +1331,20 @@ function formatDate(dateStr: string, short = false): string {
 }
 
 function canPreview(object: any): boolean {
+  console.log('[canPreview] object:', object)
+  console.log('[canPreview] object.key:', object?.key)
+  
   const key = object.key.toLowerCase()
   const textExts = /\.(txt|md|json|xml|csv|log|yaml|yml|ini|conf|cfg|js|ts|html|css|sql|py|java|cpp|c|h|vue|jsx|tsx)$/
   const imageExts = /\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff|ico)$/
   const videoExts = /\.(mp4|avi|mov|wmv|flv|mkv|webm|m4v)$/
   const audioExts = /\.(mp3|wav|flac|aac|ogg|m4a|wma)$/
   const excelExts = /\.(xlsx|xls)$/
+  const ncExts = /\.nc$/
   
-  return textExts.test(key) || imageExts.test(key) || videoExts.test(key) || audioExts.test(key) || excelExts.test(key)
+  const result = textExts.test(key) || imageExts.test(key) || videoExts.test(key) || audioExts.test(key) || excelExts.test(key) || ncExts.test(key)
+  console.log('[canPreview] result:', result)
+  return result
 }
 
 // 添加新的文件类型检测函数
@@ -1318,6 +1371,9 @@ function getPreviewType(object: any): string {
   }
   if (/\.(xlsx|xls)$/.test(key)) {
     return 'excel'
+  }
+  if (/\.nc$/.test(key)) {
+    return 'nc'
   }
   
   return 'unsupported'
@@ -1478,6 +1534,55 @@ async function previewObject(object: any) {
         } catch (error) {
           console.error('获取Excel内容失败:', error)
           ElMessage.error('获取Excel文件内容失败')
+          previewType.value = 'unsupported'
+        }
+        break
+        
+      case 'nc':
+        console.log('[previewObject] NC file detected')
+        try {
+          const token = authStore.token || localStorage.getItem('auth_token')
+          if (!token) {
+            ElMessage.error('请先登录')
+            previewType.value = 'unsupported'
+            break
+          }
+          
+          const ncApiUrl = `/api/browse/object_storage/${id}/nc/preview?bucket=${currentBucket.value}&key=${encodeURIComponent(object.key)}`
+          const response = await fetch(ncApiUrl, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+          
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}))
+            throw new Error(errorData.detail || `NC文件预览失败: ${response.status} ${response.statusText}`)
+          }
+          
+          const result = await response.json()
+          console.log('[previewObject] NC preview result:', result)
+          
+          if (result.code === 200 && result.data) {
+            if (result.data.image) {
+              currentPreviewObject.value.ncImage = result.data.image
+              currentPreviewObject.value.ncVariable = result.data.variable
+              currentPreviewObject.value.ncStats = {
+                min: result.data.min,
+                max: result.data.max,
+                mean: result.data.mean,
+                shape: result.data.shape
+              }
+            }
+            currentPreviewObject.value.ncInfo = {
+              loading: false,
+              message: result.message
+            }
+          } else {
+            throw new Error(result.detail || 'NC 文件预览失败')
+          }
+        } catch (error) {
+          console.error('NC 文件预览失败:', error)
+          ElMessage.error(`NC 文件预览失败: ${error.message}`)
           previewType.value = 'unsupported'
         }
         break
@@ -2300,6 +2405,77 @@ async function copyToClipboard(text: string) {
 .csv-chart {
   width: 100%;
   height: 400px;
+}
+
+/* NC文件预览样式 */
+.nc-preview {
+  max-width: 100%;
+}
+
+.nc-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px;
+  color: #909399;
+  font-size: 14px;
+}
+
+.nc-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nc-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e4e7ed;
+  border-radius: 4px;
+}
+
+.nc-image {
+  max-width: 100%;
+  overflow: auto;
+  text-align: center;
+  background: #f5f7fa;
+  padding: 16px;
+  border-radius: 4px;
+}
+
+.nc-image img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.nc-stats {
+  margin: 8px 0;
+}
+
+.nc-dimensions {
+  margin: 8px 0;
+}
+
+.nc-dimensions h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #303133;
+}
+
+.nc-variables {
+  margin: 8px 0;
+}
+
+.nc-variables h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #303133;
 }
 
 /* Excel预览样式 */
