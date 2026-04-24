@@ -1090,23 +1090,43 @@ async function handleFileAction({ action, file }: { action: string, file: any })
 }
 
 // 复制API链接
-function copyApiLink(file: any) {
+async function copyApiLink(file: any) {
   try {
     const id = route.params.id as string
     const apiUrl = `${window.location.origin}/api/browse/filesystem/${id}/api?path=${encodeURIComponent(file.path)}`
     
-    navigator.clipboard.writeText(apiUrl).then(() => {
+    // 尝试使用现代 Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(apiUrl)
       ElMessage.success('API链接已复制到剪贴板')
-    }).catch(() => {
-      // 降级方案
-      const input = document.createElement('input')
-      input.value = apiUrl
-      document.body.appendChild(input)
-      input.select()
-      document.execCommand('copy')
-      document.body.removeChild(input)
-      ElMessage.success('API链接已复制到剪贴板')
-    })
+      return
+    }
+    
+    // 降级方案：使用 textarea 和 execCommand
+    const textarea = document.createElement('textarea')
+    textarea.value = apiUrl
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-9999px'
+    textarea.style.top = '0'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    
+    try {
+      const successful = document.execCommand('copy')
+      if (successful) {
+        ElMessage.success('API链接已复制到剪贴板')
+      } else {
+        throw new Error('execCommand 返回 false')
+      }
+    } catch (err) {
+      console.error('复制失败:', err)
+      ElMessage.error('复制失败，请手动复制链接')
+      // 显示链接供用户手动复制
+      ElMessage.info(apiUrl)
+    } finally {
+      document.body.removeChild(textarea)
+    }
   } catch (error) {
     console.error('复制API链接失败:', error)
     ElMessage.error('复制API链接失败')
