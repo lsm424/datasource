@@ -24,3 +24,5 @@ langchain
 langchain_openai
 docker
 matplotlib==3.9.0
+netCDF4==1.7.2
+h5py==3.11.0

@@ -258,7 +258,7 @@
                 <div class="file-name" :title="file.name">{{ file.name }}</div>
                 <div class="file-meta">
                   <span class="file-size">{{ formatFileSize(file.size) }}</span>
-                  <span class="file-date">{{ formatDate(file.modified, true) }}</span>
+                  <span class="file-date">{{ formatDate(file.modified_at, true) }}</span>
                 </div>
               </div>
             </div>
@@ -324,6 +324,53 @@
           <div class="excel-content" v-html="previewContent"></div>
         </div>
         
+        <!-- NC文件预览 -->
+        <div v-else-if="previewType === 'nc'" class="nc-preview">
+          <div v-if="currentPreviewFile.ncInfo?.loading" class="nc-loading">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>正在加载NC文件信息...</span>
+          </div>
+          <div v-else-if="currentPreviewFile.ncInfo?.error" class="nc-error">
+            <el-result icon="error" title="加载失败" :sub-title="currentPreviewFile.ncInfo.error" />
+          </div>
+          <div v-else class="nc-content">
+            <div class="nc-toolbar">
+              <el-tag size="small" type="success">NetCDF文件</el-tag>
+              <el-tag size="small" v-if="currentPreviewFile.ncVariable">{{ currentPreviewFile.ncVariable }}</el-tag>
+              <el-tag size="small">{{ formatFileSize(currentPreviewFile.ncInfo?.fileSize || 0) }}</el-tag>
+            </div>
+            <div v-if="currentPreviewFile.ncImage" class="nc-image">
+              <img :src="currentPreviewFile.ncImage" alt="NC文件可视化" />
+            </div>
+            <div v-if="currentPreviewFile.ncStats" class="nc-stats">
+              <el-descriptions :column="4" border>
+                <el-descriptions-item label="最小值">{{ currentPreviewFile.ncStats.min?.toFixed(4) }}</el-descriptions-item>
+                <el-descriptions-item label="最大值">{{ currentPreviewFile.ncStats.max?.toFixed(4) }}</el-descriptions-item>
+                <el-descriptions-item label="平均值">{{ currentPreviewFile.ncStats.mean?.toFixed(4) }}</el-descriptions-item>
+                <el-descriptions-item label="维度">{{ currentPreviewFile.ncStats.shape?.join(' x ') }}</el-descriptions-item>
+              </el-descriptions>
+            </div>
+            <div v-if="currentPreviewFile.ncInfo?.dimensions" class="nc-dimensions">
+              <h4>维度信息</h4>
+              <el-tag v-for="(value, key) in currentPreviewFile.ncInfo.dimensions" :key="key" size="small" style="margin-right: 8px; margin-bottom: 4px;">
+                {{ key }}: {{ value }}
+              </el-tag>
+            </div>
+            <div v-if="currentPreviewFile.ncInfo?.variables" class="nc-variables">
+              <h4>变量列表</h4>
+              <el-table :data="currentPreviewFile.ncInfo.variables" size="small" max-height="200">
+                <el-table-column prop="name" label="变量名" width="120" />
+                <el-table-column prop="shape" label="形状" width="150">
+                  <template #default="{ row }">
+                    {{ row.shape.join(' x ') }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="dtype" label="数据类型" width="100" />
+              </el-table>
+            </div>
+          </div>
+        </div>
+        
         <!-- 其他类型 -->
         <div v-else class="unsupported-preview">
           <el-result
@@ -367,7 +414,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { 
   Folder, FolderOpened, Document, Star, List, Grid, 
   Search, Refresh, View, Download, More, InfoFilled, 
@@ -736,13 +783,21 @@ function getPermissionType(permissions: string | null | undefined): string {
 }
 
 function canPreview(file: any): boolean {
-  const ext = file.name.split('.').pop()?.toLowerCase()
+  // 优先使用后端返回的 extension 字段（去掉前面的点号）
+  let ext = file.extension?.toLowerCase()?.replace(/^\./, '')
+  
+  // 如果没有 extension 字段或为空，则从文件名中提取
+  if (!ext && file.name) {
+    ext = file.name.split('.').pop()?.toLowerCase()
+  }
+  
   const textExts = ['txt', 'md', 'json', 'xml', 'csv', 'log']
   const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
   const excelExts = ['xlsx', 'xls']
   const videoExts = ['mp4', 'mov', 'avi', 'mkv', 'webm']
+  const ncExts = ['nc']
   
-  return textExts.includes(ext) || imageExts.includes(ext) || excelExts.includes(ext) || videoExts.includes(ext)
+  return textExts.includes(ext) || imageExts.includes(ext) || excelExts.includes(ext) || videoExts.includes(ext) || ncExts.includes(ext)
 }
 
 function canAnalyze(file: any): boolean {
@@ -771,7 +826,11 @@ async function previewFile(file: any) {
     
     const id = route.params.id as string
     const token = authStore.token || localStorage.getItem('auth_token')
-    const ext = file.name.split('.').pop()?.toLowerCase()
+    // 优先使用后端返回的 extension 字段（去掉前面的点号）
+    let ext = file.extension?.toLowerCase()?.replace(/^\./, '')
+    if (!ext && file.name) {
+      ext = file.name.split('.').pop()?.toLowerCase()
+    }
     
     if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)) {
       previewType.value = 'image'
@@ -807,6 +866,41 @@ async function previewFile(file: any) {
       currentPreviewFile.value.excelInfo = {
         rows: data.rows,
         columns: data.columns
+      }
+    } else if (ext === 'nc') {
+      previewType.value = 'nc'
+      previewUrl.value = ''
+      previewContent.value = ''
+      currentPreviewFile.value.ncInfo = { loading: true }
+      try {
+        const infoResponse = await fetch(`/api/browse/filesystem/${id}/nc/info?path=${encodeURIComponent(file.path)}`, {
+          headers: { 'Authorization': `Bearer ${authStore.token || localStorage.getItem('auth_token')}` }
+        })
+        const infoData = await infoResponse.json()
+        currentPreviewFile.value.ncInfo = {
+          loading: false,
+          dimensions: infoData.data.dimensions,
+          variables: infoData.data.variables,
+          fileSize: infoData.data.file_size
+        }
+        
+        const previewResponse = await fetch(`/api/browse/filesystem/${id}/nc/preview?path=${encodeURIComponent(file.path)}`, {
+          headers: { 'Authorization': `Bearer ${authStore.token || localStorage.getItem('auth_token')}` }
+        })
+        const previewData = await previewResponse.json()
+        if (previewData.code === 200) {
+          currentPreviewFile.value.ncImage = previewData.data.image
+          currentPreviewFile.value.ncVariable = previewData.data.variable
+          currentPreviewFile.value.ncStats = {
+            min: previewData.data.min,
+            max: previewData.data.max,
+            mean: previewData.data.mean,
+            shape: previewData.data.shape
+          }
+        }
+      } catch (ncError) {
+        console.error('NC文件预览失败:', ncError)
+        currentPreviewFile.value.ncInfo = { loading: false, error: '预览失败' }
       }
     } else {
       previewType.value = 'unsupported'
@@ -860,6 +954,39 @@ async function tryPreviewPathFromQuery(pathFromQuery: string): Promise<boolean> 
       currentPreviewFile.value = {
         ...fileObj,
         excelInfo: { rows: data.rows, columns: data.columns }
+      }
+    } else if (ext === 'nc') {
+      previewType.value = 'nc'
+      currentPreviewFile.value = { name, path: normalizedPath, type: 'file', ncInfo: { loading: true } }
+      try {
+        const infoResponse = await fetch(`/api/browse/filesystem/${id}/nc/info?path=${encodeURIComponent(normalizedPath)}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        const infoData = await infoResponse.json()
+        currentPreviewFile.value.ncInfo = {
+          loading: false,
+          dimensions: infoData.data.dimensions,
+          variables: infoData.data.variables,
+          fileSize: infoData.data.file_size
+        }
+        
+        const previewResponse = await fetch(`/api/browse/filesystem/${id}/nc/preview?path=${encodeURIComponent(normalizedPath)}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        const previewData = await previewResponse.json()
+        if (previewData.code === 200) {
+          currentPreviewFile.value.ncImage = previewData.data.image
+          currentPreviewFile.value.ncVariable = previewData.data.variable
+          currentPreviewFile.value.ncStats = {
+            min: previewData.data.min,
+            max: previewData.data.max,
+            mean: previewData.data.mean,
+            shape: previewData.data.shape
+          }
+        }
+      } catch (ncError) {
+        console.error('NC文件预览失败:', ncError)
+        currentPreviewFile.value.ncInfo = { loading: false, error: '预览失败' }
       }
     } else {
       previewType.value = 'unsupported'
@@ -1323,6 +1450,76 @@ function saveFavorites() {
 /* Excel预览样式 */
 .excel-preview {
   max-width: 100%;
+}
+
+.nc-preview {
+  max-width: 100%;
+}
+
+.nc-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px;
+  color: #909399;
+  font-size: 14px;
+}
+
+.nc-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nc-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e4e7ed;
+  border-radius: 4px;
+}
+
+.nc-image {
+  max-width: 100%;
+  overflow: auto;
+  text-align: center;
+  background: #f5f7fa;
+  padding: 16px;
+  border-radius: 4px;
+}
+
+.nc-image img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.nc-stats {
+  margin: 8px 0;
+}
+
+.nc-dimensions {
+  margin: 8px 0;
+}
+
+.nc-dimensions h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #303133;
+}
+
+.nc-variables {
+  margin: 8px 0;
+}
+
+.nc-variables h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #303133;
 }
 
 .excel-toolbar {

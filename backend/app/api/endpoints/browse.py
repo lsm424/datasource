@@ -1,3 +1,14 @@
+import netCDF4 as nc
+import numpy as np
+import base64
+import matplotlib
+matplotlib.use('Agg')
+try:
+    import h5py
+    HDF5_AVAILABLE = True
+except ImportError:
+    HDF5_AVAILABLE = False
+import matplotlib.pyplot as plt
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form, Request
 from fastapi.responses import StreamingResponse
@@ -1431,6 +1442,223 @@ async def get_object_content(
         )
 
 
+@router.get("/object_storage/{datasource_id}/nc/preview")
+async def preview_nc_file(
+    datasource_id: str,
+    bucket: str = Query(..., description="存储桶名称"),
+    key: str = Query(..., description="对象键名"),
+    variable: str = Query(None, description="要可视化的变量名，默认第一个数据变量"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> DataResponse[dict]:
+    """预览NC文件，生成可视化图片"""
+    
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        import os
+        import tempfile
+        
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service_with_retry(config)
+        
+        if not key.lower().endswith('.nc'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="文件不是NC格式"
+            )
+        
+        try:
+            response = minio_service.download_object(bucket, key)
+            file_data = b''.join(response.stream())
+            response.close()
+            response.release_conn()
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"无法下载文件: {str(e)}"
+            )
+        
+        with tempfile.NamedTemporaryFile(suffix='.nc', delete=False) as tmp:
+            tmp.write(file_data)
+            tmp_path = tmp.name
+        
+        try:
+            with open(tmp_path, 'rb') as f:
+                header = f.read(8)
+                logging.info(f"文件头: {header}")
+                is_netcdf = header[:3] == b'CDF'
+                is_hdf5 = header[:4] == b'\x89HDF' or header[:4] == b'\x89H\x0d\x0a\x1a\x0a'
+                if not is_netcdf and not is_hdf5:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"文件不是有效的NetCDF/HDF5格式: header={header}"
+                    )
+            
+            file_format = "NetCDF" if is_netcdf else "HDF5"
+            logging.info(f"文件格式: {file_format}")
+            
+            if is_hdf5:
+                if not HDF5_AVAILABLE:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="HDF5格式需要安装 h5py 库"
+                    )
+                dataset = h5py.File(tmp_path, 'r')
+                logging.info(f"HDF5文件打开成功")
+                
+                exclude_keys = ['lat', 'lon', 'lat_bnds', 'lon_bnds', 'lat_0', 'lon_0', 'lat_1', 'lon_1']
+                data_var = None
+                if variable and variable in dataset:
+                    if isinstance(dataset[variable], h5py.Dataset):
+                        data_var = dataset[variable]
+                else:
+                    for var_name in dataset.keys():
+                        if var_name not in exclude_keys and isinstance(dataset[var_name], h5py.Dataset):
+                            var = dataset[var_name]
+                            if len(var.shape) >= 2:
+                                data_var = var
+                                variable = var_name
+                                break
+                
+                if data_var is None:
+                    dataset.close()
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="未找到可可视化的数据变量"
+                    )
+                
+                data = data_var[:]
+                if len(data.shape) == 3:
+                    data = data[0, :, :]
+                elif len(data.shape) == 4:
+                    data = data[0, 0, :, :]
+                
+                data = np.array(data)
+                if data.dtype.kind in ['S', 'U', 'O']:
+                    try:
+                        data = data.astype(float)
+                    except (ValueError, TypeError):
+                        dataset.close()
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"变量 {variable} 是字符串类型，无法可视化"
+                        )
+                
+                var_name = variable
+                dataset.close()
+                dataset = None
+            else:
+                dataset = nc.Dataset(tmp_path, 'r')
+                logging.info(f"NC文件打开成功")
+                
+                var_names = list(dataset.variables.keys())
+                logging.info(f"变量列表: {var_names}")
+                
+                data_var = None
+                if variable and variable in dataset.variables:
+                    data_var = dataset.variables[variable]
+                else:
+                    for var in dataset.variables.values():
+                        if len(var.shape) >= 2 and var.name not in ['lat', 'lon', 'lat_bnds', 'lon_bnds']:
+                            if var.dtype.kind not in ['S', 'U', 'O']:
+                                data_var = var
+                                break
+                
+                if data_var is None:
+                    dataset.close()
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="未找到可可视化的数值类型数据变量"
+                    )
+                
+                var_name = data_var.name
+                logging.info(f"选择的变量: {var_name}")
+                
+                raw_data = data_var[:]
+                data = np.copy(np.array(raw_data))
+                logging.info(f"读取变量数据完成，shape: {data.shape}, dtype: {data.dtype}")
+                
+                if len(data.shape) == 3:
+                    data = data[0, :, :]
+                elif len(data.shape) == 4:
+                    data = data[0, 0, :, :]
+                
+                if data.dtype.kind in ['S', 'U']:
+                    try:
+                        data = data.astype(float)
+                    except (ValueError, TypeError):
+                        dataset.close()
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"变量 {var_name} 是字符串类型，无法可视化"
+                        )
+                
+                try:
+                    dataset.close()
+                except:
+                    pass
+                dataset = None
+            
+            logging.info(f"数据准备完成，开始绘图")
+            fig, ax = plt.subplots(figsize=(12, 6))
+            cf = ax.imshow(data, cmap='RdBu_r', aspect='auto', origin='lower')
+            cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, shrink=0.8)
+            cbar.set_label(var_name, fontsize=12)
+            ax.set_xlabel('Longitude', fontsize=12)
+            ax.set_ylabel('Latitude', fontsize=12)
+            ax.set_title(f'{file_format} File Preview: {var_name}', fontsize=14, fontweight='bold')
+            
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_img:
+                plt.savefig(tmp_img.name, dpi=100, bbox_inches='tight')
+                tmp_img.seek(0)
+                img_base64 = base64.b64encode(tmp_img.read()).decode('utf-8')
+                tmp_img.close()
+            
+            plt.close()
+            if dataset is not None:
+                dataset.close()
+            
+            result = {
+                "code": 200,
+                "data": {
+                    "image": f"data:image/png;base64,{img_base64}",
+                    "variable": var_name,
+                    "shape": list(data.shape),
+                    "min": float(np.nanmin(data)),
+                    "max": float(np.nanmax(data)),
+                    "mean": float(np.nanmean(data))
+                },
+                "message": "预览图生成成功"
+            }
+            
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"预览NC文件失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"预览NC文件失败: {str(e)}"
+        )
+
+
 @router.post("/object_storage/{datasource_id}/test", response_model=DataResponse[MinIOConnectionTest])
 async def test_minio_connection(
     datasource_id: str,
@@ -1561,4 +1789,350 @@ async def get_table_data(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取表数据失败: {str(e)}"
+        )
+
+
+@router.get("/filesystem/{datasource_id}/nc/info")
+async def get_nc_file_info(
+    datasource_id: str,
+    path: str = Query(..., description="NC文件路径"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> DataResponse[dict]:
+    """获取NC文件的信息（维度、变量等）"""
+    
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.FILESYSTEM
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文件系统数据源不存在"
+        )
+    
+    try:
+        import os
+        
+        config = parse_datasource_config(datasource.config)
+        base_path = os.path.normpath(config["path"])
+        
+        relative_path = path.lstrip("/").replace("/", os.sep)
+        full_path = os.path.join(base_path, relative_path)
+        full_path = os.path.normpath(full_path)
+        
+        logging.info(f"NC预览 - 数据源配置路径: {base_path}")
+        logging.info(f"NC预览 - 相对路径: {relative_path}")
+        logging.info(f"NC预览 - 完整路径: {full_path}")
+        logging.info(f"NC预览 - 文件是否存在: {os.path.exists(full_path)}")
+        
+        if not os.path.exists(full_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"文件不存在: full_path={full_path}, path={path}"
+            )
+        
+        if not full_path.lower().endswith('.nc'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="文件不是NC格式"
+            )
+        
+        # 检查文件是否存在且可读
+        if not os.path.isfile(full_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"文件不存在或无法访问: {full_path}"
+            )
+        
+        logging.info(f"尝试打开NC文件: {full_path}, 文件大小: {os.path.getsize(full_path)} bytes")
+        
+        try:
+            dataset = nc.Dataset(full_path, 'r')
+        except Exception as e:
+            logging.error(f"打开NC文件失败: {full_path}, 错误: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"无法打开NC文件: {str(e)}"
+            )
+        
+        dimensions = {}
+        for dim_name, dim in dataset.dimensions.items():
+            dimensions[dim_name] = len(dim)
+        
+        variables = []
+        for var in dataset.variables.values():
+            var_info = {
+                "name": var.name,
+                "shape": list(var.shape),
+                "dtype": str(var.dtype),
+                "dimensions": list(var.dimensions)
+            }
+            variables.append(var_info)
+        
+        attributes = {}
+        for attr in dataset.ncattrs():
+            attributes[attr] = getattr(dataset, attr)
+        
+        dataset.close()
+        
+        return {
+            "code": 200,
+            "data": {
+                "dimensions": dimensions,
+                "variables": variables,
+                "attributes": attributes,
+                "file_size": os.path.getsize(full_path)
+            },
+            "message": "获取NC文件信息成功"
+        }
+        
+    except Exception as e:
+        logging.error(f"获取NC文件信息失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取NC文件信息失败: {str(e)}"
+        )
+
+
+@router.get("/filesystem/{datasource_id}/nc/preview")
+async def preview_nc_file(
+    datasource_id: str,
+    path: str = Query(..., description="NC文件路径"),
+    variable: str = Query(None, description="要可视化的变量名，默认第一个数据变量"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> DataResponse[dict]:
+    """预览NC文件，生成可视化图片"""
+    
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.FILESYSTEM
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文件系统数据源不存在"
+        )
+    
+    try:
+        import os
+        import tempfile
+        
+        config = parse_datasource_config(datasource.config)
+        base_path = os.path.normpath(config["path"])
+        
+        relative_path = path.lstrip("/").replace("/", os.sep)
+        full_path = os.path.join(base_path, relative_path)
+        full_path = os.path.normpath(full_path)
+        
+        if not os.path.exists(full_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"文件不存在: {path}"
+            )
+        
+        if not full_path.lower().endswith('.nc'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="文件不是NC格式"
+            )
+        
+        # 验证文件格式 - NC文件以'CDF'开头
+        with open(full_path, 'rb') as f:
+            header = f.read(4)
+            logging.info(f"NC文件头: {header}")
+            if header[:3] != b'CDF':
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"文件不是有效的NetCDF格式: header={header}"
+                )
+        
+        dataset = nc.Dataset(full_path, 'r')
+        logging.info(f"NC文件打开成功，变量数: {len(list(dataset.variables.keys()))}")
+        
+        data_var = None
+        if variable and variable in dataset.variables:
+            data_var = dataset.variables[variable]
+        else:
+            for var in dataset.variables.values():
+                if len(var.shape) >= 2 and var.name not in ['lat', 'lon', 'lat_bnds', 'lon_bnds']:
+                    if var.dtype.kind not in ['S', 'U', 'O']:
+                        data_var = var
+                        break
+        
+        if data_var is None:
+            dataset.close()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="未找到可可视化的数值类型数据变量"
+            )
+        
+        var_name = data_var.name
+        raw_data = data_var[:]
+        data = np.copy(np.array(raw_data))
+        logging.info(f"读取变量 {var_name} 数据完成，shape: {data.shape}, dtype: {data.dtype}")
+        
+        if len(data.shape) == 3:
+            data = data[0, :, :]
+        elif len(data.shape) == 4:
+            data = data[0, 0, :, :]
+        
+        if data.dtype.kind in ['S', 'U']:
+            try:
+                data = data.astype(float)
+            except (ValueError, TypeError):
+                dataset.close()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"变量 {var_name} 是字符串类型，无法可视化"
+                )
+        
+        try:
+            dataset.close()
+        except:
+            pass
+        dataset = None
+        
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # 使用 imshow 避免 pcolormesh 的维度问题
+        cf = ax.imshow(data, cmap='RdBu_r', aspect='auto', origin='lower')
+        
+        cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, shrink=0.8)
+        cbar.set_label(var_name, fontsize=12)
+        
+        ax.set_xlabel('Longitude', fontsize=12)
+        ax.set_ylabel('Latitude', fontsize=12)
+        ax.set_title(f'NC File Preview: {var_name}', fontsize=14, fontweight='bold')
+        
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            plt.savefig(tmp.name, dpi=100, bbox_inches='tight')
+            tmp.seek(0)
+            img_base64 = base64.b64encode(tmp.read()).decode('utf-8')
+        
+        plt.close()
+        
+        return {
+            "code": 200,
+            "data": {
+                "image": f"data:image/png;base64,{img_base64}",
+                "variable": var_name,
+                "shape": list(data.shape),
+                "min": float(np.nanmin(data)),
+                "max": float(np.nanmax(data)),
+                "mean": float(np.nanmean(data))
+            },
+            "message": "预览图生成成功"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"预览NC文件失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"预览NC文件失败: {str(e)}"
+        )
+
+
+@router.get("/filesystem/{datasource_id}/nc/data")
+async def get_nc_file_data(
+    datasource_id: str,
+    path: str = Query(..., description="NC文件路径"),
+    variable: str = Query(None, description="变量名"),
+    slice_params: str = Query(None, description="切片参数，如 time=0,level=0"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+) -> DataResponse[dict]:
+    """获取NC文件的数据（支持切片）"""
+    
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.FILESYSTEM
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文件系统数据源不存在"
+        )
+    
+    try:
+        import os
+        
+        config = parse_datasource_config(datasource.config)
+        base_path = os.path.normpath(config["path"])
+        
+        relative_path = path.lstrip("/").replace("/", os.sep)
+        full_path = os.path.join(base_path, relative_path)
+        full_path = os.path.normpath(full_path)
+        
+        if not os.path.exists(full_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"文件不存在: {path}"
+            )
+        
+        dataset = nc.Dataset(full_path, 'r')
+        
+        if variable:
+            if variable not in dataset.variables:
+                dataset.close()
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"变量 {variable} 不存在"
+                )
+            var = dataset.variables[variable]
+            
+            slices = {}
+            if slice_params:
+                for pair in slice_params.split(','):
+                    key, val = pair.split('=')
+                    slices[int(key)] = int(val)
+            
+            if slices:
+                data = var[tuple(slices.values())]
+            else:
+                data = var[:]
+            
+            dataset.close()
+            
+            return {
+                "code": 200,
+                "data": {
+                    "variable": variable,
+                    "shape": list(data.shape) if hasattr(data, 'shape') else [],
+                    "data": data.flatten().tolist()[:1000]
+                },
+                "message": "获取数据成功"
+            }
+        else:
+            all_vars = {}
+            for var_name, var in dataset.variables.items():
+                if len(var.shape) >= 2:
+                    all_vars[var_name] = {
+                        "shape": list(var.shape),
+                        "dtype": str(var.dtype)
+                    }
+            
+            dataset.close()
+            
+            return {
+                "code": 200,
+                "data": {
+                    "variables": all_vars
+                },
+                "message": "获取变量列表成功"
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"获取NC文件数据失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取NC文件数据失败: {str(e)}"
         )

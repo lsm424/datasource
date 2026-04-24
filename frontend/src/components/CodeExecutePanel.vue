@@ -2,7 +2,7 @@
   <el-drawer
     v-model="visible"
     title="代码执行"
-    size="50%"
+    size="40%"
     :with-header="true"
     class="code-execute-panel"
     destroy-on-close
@@ -398,6 +398,13 @@ function openImagePreview(index: number) {
 :deep(.code-execute-panel .el-drawer__body) {
   padding: 16px;
   overflow: hidden;
+  height: calc(100vh - 80px);
+}
+
+:deep(.code-execute-panel.el-drawer) {
+  top: 40px;
+  height: calc(100vh - 80px);
+  border-radius: 8px 0 0 8px;
 }
 
 /* 内联图片样式 */

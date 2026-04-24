@@ -55,7 +55,8 @@ logs/
 # Database
 *.db
 *.sqlite3
-
+datasource.zip
+openapi_test copy.py
 # Environment variables
 .env
 .env.local

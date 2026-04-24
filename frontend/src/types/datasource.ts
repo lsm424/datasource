@@ -113,7 +113,7 @@ export interface FileSystemItem {
   path: string
   type: 'file' | 'directory'
   size: number
-  modifiedAt: string
+  modified_at: string
   permissions?: string
   extension?: string
 }
