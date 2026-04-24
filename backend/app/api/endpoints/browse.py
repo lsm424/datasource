@@ -9,7 +9,7 @@ try:
 except ImportError:
     HDF5_AVAILABLE = False
 import matplotlib.pyplot as plt
-from typing import Any, List
+from typing import Any, List, Union
 from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -540,6 +540,126 @@ async def download_file(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"文件下载失败: {str(e)}"
+        )
+
+
+@router.get("/filesystem/{datasource_id}/api", response_model=None)
+async def get_filesystem_api(
+    datasource_id: str,
+    path: str = Query(..., description="文件路径"),
+    db: Session = Depends(get_db)
+):
+    """免登录获取文件系统数据 API（CSV 返回 JSON，其他返回二进制）"""
+    
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.FILESYSTEM
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文件系统数据源不存在"
+        )
+    
+    try:
+        import os
+        import mimetypes
+        
+        config = parse_datasource_config(datasource.config)
+        base_path = os.path.normpath(config["path"])
+        
+        relative_path = path.lstrip("/").replace("/", os.sep)
+        full_path = os.path.join(base_path, relative_path)
+        full_path = os.path.normpath(full_path)
+        
+        # 安全检查 - 使用 commonpath 进行更可靠的检查
+        try:
+            common_path = os.path.commonpath([base_path, full_path])
+            if common_path != base_path:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="非法路径"
+                )
+        except ValueError:
+            # 如果路径不在同一驱动器上
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="非法路径"
+            )
+        
+        if not os.path.exists(full_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"文件不存在: {path}"
+            )
+        
+        if os.path.isdir(full_path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="指定路径是目录，无法下载"
+            )
+        
+        # 检查文件扩展名
+        ext = os.path.splitext(full_path)[1].lower()
+        
+        if ext in ['.csv']:
+            # CSV 格式返回 JSON
+            try:
+                import pandas as pd
+                import numpy as np
+                
+                df = pd.read_csv(full_path)
+                
+                # 处理 NaN 和 Infinity 值，使其可 JSON 序列化
+                df = df.replace({np.nan: None, np.inf: None, -np.inf: None})
+                
+                json_data = df.to_dict(orient='records')
+                
+                return {
+                    "code": 200,
+                    "data": {
+                        "columns": df.columns.tolist(),
+                        "rows": len(df),
+                        "data": json_data
+                    },
+                    "message": "数据获取成功"
+                }
+            except Exception as e:
+                logging.error(f"CSV 解析失败: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"CSV 解析失败: {str(e)}"
+                )
+        else:
+            # 其他格式返回二进制文件
+            mime_type, _ = mimetypes.guess_type(full_path)
+            if mime_type is None:
+                mime_type = "application/octet-stream"
+            
+            def file_generator():
+                with open(full_path, "rb") as file:
+                    while True:
+                        data = file.read(8192)
+                        if not data:
+                            break
+                        yield data
+            
+            filename = os.path.basename(full_path)
+            
+            return StreamingResponse(
+                file_generator(),
+                media_type=mime_type,
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}"
+                }
+            )
+        
+    except Exception as e:
+        logging.error(f"获取文件系统数据失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取数据失败: {str(e)}"
         )
 
 
@@ -1151,6 +1271,94 @@ async def download_object(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"下载对象失败: {str(e)}"
+        )
+
+
+@router.get("/object_storage/{datasource_id}/api", response_model=None)
+async def get_object_storage_api(
+    datasource_id: str,
+    bucket: str = Query(..., description="存储桶名称"),
+    key: str = Query(..., description="对象键名"),
+    db: Session = Depends(get_db)
+):
+    """免登录获取对象存储数据 API（CSV 返回 JSON，其他返回二进制）"""
+    
+    datasource = db.query(DataSource).filter(
+        DataSource.id == datasource_id,
+        DataSource.type == DataSourceType.OBJECT_STORAGE
+    ).first()
+    
+    if not datasource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对象存储数据源不存在"
+        )
+    
+    try:
+        import os
+        config = parse_datasource_config(datasource.config)
+        minio_service = create_minio_service_with_retry(config)
+        
+        # 下载对象
+        response = minio_service.download_object(bucket, key)
+        file_data = b''.join(response.stream())
+        response.close()
+        response.release_conn()
+        
+        # 检查文件扩展名
+        ext = os.path.splitext(key)[1].lower()
+        
+        if ext in ['.csv']:
+            # CSV 格式返回 JSON
+            try:
+                import pandas as pd
+                import numpy as np
+                import io
+                
+                csv_content = file_data.decode('utf-8')
+                df = pd.read_csv(io.StringIO(csv_content))
+                
+                # 处理 NaN 和 Infinity 值，使其可 JSON 序列化
+                df = df.replace({np.nan: None, np.inf: None, -np.inf: None})
+                
+                # 转换为 JSON
+                json_data = df.to_dict(orient='records')
+                
+                return {
+                    "code": 200,
+                    "data": {
+                        "columns": df.columns.tolist(),
+                        "rows": len(df),
+                        "data": json_data
+                    },
+                    "message": "数据获取成功"
+                }
+            except Exception as e:
+                logging.error(f"CSV 解析失败: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"CSV 解析失败: {str(e)}"
+                )
+        else:
+            # 其他格式返回二进制文件
+            obj_info = minio_service.get_object_info(bucket, key)
+            
+            def iterfile():
+                yield file_data
+            
+            return StreamingResponse(
+                iterfile(),
+                media_type=obj_info.get("content_type", "application/octet-stream"),
+                headers={
+                    "Content-Disposition": f"attachment; filename={os.path.basename(key)}"
+                }
+            )
+        
+    except Exception as e:
+        logging.error(f"获取对象存储数据失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取数据失败: {str(e)}"
         )
 
 

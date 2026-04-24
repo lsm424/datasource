@@ -247,7 +247,7 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="200" fixed="right">
+              <el-table-column label="操作" width="240" fixed="right">
                 <template #default="{ row }">
                   <el-button-group size="small" v-if="!row.isFolder">
                     <el-button 
@@ -268,6 +268,13 @@
                       @click="downloadObject(row)"
                     >
                       下载
+                    </el-button>
+                    <el-button 
+                      icon="Link" 
+                      @click="copyApiLink(row)"
+                      title="复制API链接"
+                    >
+                      API
                     </el-button>
                     <el-dropdown @command="handleObjectAction">
                       <el-button icon="More" />
@@ -1746,6 +1753,35 @@ async function handleObjectAction({ action, object }: { action: string, object: 
     case 'delete':
       await deleteObject(object)
       break
+  }
+}
+
+// 复制API链接
+function copyApiLink(object: any) {
+  if (!currentBucket.value) {
+    ElMessage.error('请先选择存储桶')
+    return
+  }
+  
+  try {
+    const id = route.params.id as string
+    const apiUrl = `${window.location.origin}/api/browse/object_storage/${id}/api?bucket=${encodeURIComponent(currentBucket.value)}&key=${encodeURIComponent(object.key)}`
+    
+    navigator.clipboard.writeText(apiUrl).then(() => {
+      ElMessage.success('API链接已复制到剪贴板')
+    }).catch(() => {
+      // 降级方案
+      const input = document.createElement('input')
+      input.value = apiUrl
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+      ElMessage.success('API链接已复制到剪贴板')
+    })
+  } catch (error) {
+    console.error('复制API链接失败:', error)
+    ElMessage.error('复制API链接失败')
   }
 }
 

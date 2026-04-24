@@ -183,7 +183,7 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="200" fixed="right">
+            <el-table-column label="操作" width="240" fixed="right">
               <template #default="{ row }">
                 <el-button-group size="small">
                   <el-button 
@@ -208,6 +208,14 @@
                     v-if="row.type !== 'directory'"
                   >
                     下载
+                  </el-button>
+                  <el-button 
+                    v-if="row.type !== 'directory'"
+                    icon="Link" 
+                    @click="copyApiLink(row)"
+                    title="复制API链接"
+                  >
+                    API
                   </el-button>
                   <el-dropdown @command="handleFileAction">
                     <el-button icon="More" />
@@ -1078,6 +1086,30 @@ async function handleFileAction({ action, file }: { action: string, file: any })
     case 'delete':
       await deleteFile(file)
       break
+  }
+}
+
+// 复制API链接
+function copyApiLink(file: any) {
+  try {
+    const id = route.params.id as string
+    const apiUrl = `${window.location.origin}/api/browse/filesystem/${id}/api?path=${encodeURIComponent(file.path)}`
+    
+    navigator.clipboard.writeText(apiUrl).then(() => {
+      ElMessage.success('API链接已复制到剪贴板')
+    }).catch(() => {
+      // 降级方案
+      const input = document.createElement('input')
+      input.value = apiUrl
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+      ElMessage.success('API链接已复制到剪贴板')
+    })
+  } catch (error) {
+    console.error('复制API链接失败:', error)
+    ElMessage.error('复制API链接失败')
   }
 }
 
