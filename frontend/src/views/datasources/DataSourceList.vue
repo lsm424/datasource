@@ -254,6 +254,7 @@ import {
 
 import { useAuthStore } from '@/stores/auth'
 import { useDataSourceStore } from '@/stores/datasource'
+import { dataSourceApi } from '@/api/datasource'
 import type { DataSource, DataSourceType } from '@/types/datasource'
 
 const router = useRouter()
@@ -344,9 +345,16 @@ const editDataSource = (datasource: DataSource) => {
 
 const testConnection = async (datasource: DataSource) => {
   testingConnections.value[datasource.id] = true
-  
+
   try {
-    const result = await dataSourceStore.testConnection(datasource.config)
+    // 先获取数据源的完整详情（包含config配置）
+    // 响应拦截器已经提取了 data.data，所以 fullDataSource 直接是数据源对象
+    const fullDataSource = await dataSourceApi.getDataSourceById(datasource.id)
+
+    const result = await dataSourceStore.testConnection({
+      type: fullDataSource.type,
+      config: fullDataSource.config
+    })
     if (result.success) {
       ElMessage.success('连接测试成功')
     } else {
