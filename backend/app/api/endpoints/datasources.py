@@ -328,6 +328,10 @@ async def test_datasource_connection(
         """在线程中测试数据库连接（同步函数）"""
         db_type = config_dict.get('db_type', 'MySQL')
         
+        # 处理枚举类型，转换为字符串
+        if hasattr(db_type, 'value'):
+            db_type = db_type.value
+        
         if db_type == 'MySQL':
             import pymysql
             connection = pymysql.connect(
