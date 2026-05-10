@@ -552,6 +552,7 @@ const objectStorageRules: FormRules = {
   endpoint: [
     { required: true, message: '请输入端点地址', trigger: 'blur' },
     { pattern: /^https?:\/\//, message: '端点地址必须以http://或https://开头', trigger: 'blur' }
+    // { pattern: /^[a-zA-Z0-9.-]+(:\d+)?$/, message: '端点地址格式为: host:port，如: localhost:9000', trigger: 'blur' }
   ],
   access_key: [
     { required: true, message: '请输入访问密钥', trigger: 'blur' }

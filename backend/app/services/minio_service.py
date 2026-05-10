@@ -2,6 +2,7 @@
 MinIO对象存储服务
 """
 import asyncio
+import re
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from minio import Minio
@@ -12,6 +13,29 @@ import logging
 from app.core.async_executor import run_in_background
 
 logger = logging.getLogger(__name__)
+
+
+def clean_endpoint(endpoint: str) -> str:
+    """
+    清理endpoint，去除协议前缀和路径
+    MinIO客户端要求endpoint格式为: host:port
+    
+    Args:
+        endpoint: 原始endpoint，可能包含协议如 http://host:port
+        
+    Returns:
+        清理后的endpoint，格式为 host:port
+    """
+    if not endpoint:
+        return endpoint
+    
+    # 去除协议前缀 (http:// 或 https://)
+    endpoint = re.sub(r'^https?://', '', endpoint)
+    
+    # 去除路径部分（保留只有host:port）
+    endpoint = endpoint.split('/')[0]
+    
+    return endpoint.strip()
 
 class MinIOService:
     """MinIO对象存储服务类"""
@@ -460,6 +484,9 @@ def create_minio_service_with_retry(config: Dict[str, Any]) -> MinIOService:
     Returns:
         MinIO服务实例
     """
+    # 清理endpoint，去除协议前缀
+    endpoint = clean_endpoint(config.get("endpoint", "localhost:9000"))
+    
     # 首先尝试配置中指定的SSL模式
     ssl_modes = [config.get("ssl", config.get("use_ssl", True))]
     
@@ -474,7 +501,7 @@ def create_minio_service_with_retry(config: Dict[str, Any]) -> MinIOService:
     for ssl_mode in ssl_modes:
         try:
             service = MinIOService(
-                endpoint=config.get("endpoint", "localhost:9000"),
+                endpoint=endpoint,
                 access_key=config.get("access_key", ""),
                 secret_key=config.get("secret_key", ""),
                 secure=ssl_mode,
